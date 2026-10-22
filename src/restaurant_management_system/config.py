@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
 
+    # Messaging. "log" records outbound messages without sending; a real WhatsApp provider
+    # plugs in behind messaging.provider.MessageProvider.
+    whatsapp_provider: str = "log"
+    whatsapp_webhook_secret: str = ""
+    owner_contact: str = ""
+
+    # Background jobs (booking reminders, automatic retention campaigns).
+    scheduler_enabled: bool = True
+
     cors_origins: list[str] = ["http://localhost:5173"]
 
 

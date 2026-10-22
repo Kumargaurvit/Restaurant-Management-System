@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, request } from "../api.js";
+import NewOrderForm from "./NewOrderForm.jsx";
 import OrderPanel from "./OrderPanel.jsx";
 
 export default function OrdersTab({ tables, menuItems, categories }) {
@@ -8,6 +9,7 @@ export default function OrdersTab({ tables, menuItems, categories }) {
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
   const [delivery, setDelivery] = useState(null);
+  const [newOrder, setNewOrder] = useState(null); // { type, tableId } for dine-in and takeaway
 
   const refresh = useCallback(async () => {
     try {
@@ -32,10 +34,19 @@ export default function OrdersTab({ tables, menuItems, categories }) {
       const order = await request("/api/billing/orders", { method: "POST", body });
       setSelected(order);
       setDelivery(null);
+      setNewOrder(null);
       refresh();
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  // Used by the dine-in and takeaway forms, which show their own errors.
+  async function startOrder(body) {
+    const order = await request("/api/billing/orders", { method: "POST", body });
+    setSelected(order);
+    setNewOrder(null);
+    refresh();
   }
 
   async function openOrder(orderId) {
@@ -85,11 +96,14 @@ export default function OrdersTab({ tables, menuItems, categories }) {
                 <button
                   key={table.id}
                   className={`table-button ${existing ? "occupied" : ""}`}
-                  onClick={() =>
-                    existing
-                      ? openOrder(existing.id)
-                      : createOrder({ order_type: "dine_in", table_id: table.id })
-                  }
+                  onClick={() => {
+                    if (existing) {
+                      openOrder(existing.id);
+                    } else {
+                      setDelivery(null);
+                      setNewOrder({ type: "dine_in", tableId: table.id });
+                    }
+                  }}
                   aria-label={`${table.name} ${existing ? "occupied" : "free"}`}
                 >
                   <strong>{table.name}</strong>
@@ -101,16 +115,45 @@ export default function OrdersTab({ tables, menuItems, categories }) {
         )}
 
         <div className="row">
-          <button className="button secondary" onClick={() => createOrder({ order_type: "takeaway" })}>
+          <button
+            className="button secondary"
+            onClick={() => {
+              setDelivery(null);
+              setNewOrder({ type: "dine_in", tableId: "" });
+            }}
+          >
+            New dine-in
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => {
+              setDelivery(null);
+              setNewOrder({ type: "takeaway" });
+            }}
+          >
             New takeaway
           </button>
           <button
             className="button secondary"
-            onClick={() => setDelivery({ name: "", phone: "", address: "" })}
+            onClick={() => {
+              setNewOrder(null);
+              setDelivery({ name: "", phone: "", address: "" });
+            }}
           >
             New delivery
           </button>
         </div>
+
+        {newOrder && (
+          <NewOrderForm
+            key={`${newOrder.type}-${newOrder.tableId ?? ""}`}
+            type={newOrder.type}
+            freeTables={activeTables.filter((table) => !orderByTable.has(table.id))}
+            initialTableId={newOrder.tableId}
+            onSubmit={startOrder}
+            onCancel={() => setNewOrder(null)}
+          />
+        )}
 
         {delivery && (
           <form className="card" onSubmit={submitDelivery} aria-label="New delivery order">

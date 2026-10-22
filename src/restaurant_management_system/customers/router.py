@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Select, func, select
@@ -11,7 +12,7 @@ from restaurant_management_system.auth.models import Role
 from restaurant_management_system.billing.models import Bill, Order, OrderItem, OrderStatus
 from restaurant_management_system.customers import schemas
 from restaurant_management_system.customers.models import Customer
-from restaurant_management_system.customers.services import normalize_phone
+from restaurant_management_system.customers.services import normalize_phone, set_marketing_opt_out
 from restaurant_management_system.db.session import get_session
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
@@ -60,6 +61,8 @@ def _customer_out(customer: Customer, row) -> schemas.CustomerOut:
         first_visit=row.first_visit,
         last_visit=row.last_visit,
         is_returning=visits >= 2,
+        marketing_opt_out=customer.marketing_opt_out,
+        opted_out_at=customer.opted_out_at,
     )
 
 
@@ -216,6 +219,33 @@ async def customer_detail(
             for bill in bills
         ],
     )
+
+
+@router.put(
+    "/{customer_id}/marketing-opt-out",
+    response_model=schemas.CustomerOut,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def update_marketing_opt_out(
+    customer_id: int,
+    body: schemas.MarketingOptOutIn,
+    session: AsyncSession = Depends(get_session),
+) -> schemas.CustomerOut:
+    """Record that a guest asked (in person, by phone) to stop or resume marketing messages."""
+    customer = await session.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Customer not found")
+    set_marketing_opt_out(customer, body.opt_out, "staff")
+    await session.commit()
+    stats = _stats()
+    row = (
+        await session.execute(
+            select(stats.c.visits, stats.c.spent, stats.c.first_visit, stats.c.last_visit).where(
+                stats.c.customer_id == customer_id
+            )
+        )
+    ).first()
+    return _customer_out(customer, row or SimpleNamespace(visits=0, spent=0, first_visit=None, last_visit=None))
 
 
 # -------------------------------------------------------------- reports

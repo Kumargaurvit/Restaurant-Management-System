@@ -12,7 +12,17 @@ async function openBilling(user, seed) {
   return { ...fake, api };
 }
 
-const openTable = async (name) => userEvent.click(await screen.findByRole("button", { name: `${name} free` }));
+// Dine-in and takeaway orders need the guest's contact number and name before they start.
+async function fillGuest(phone = "9811111111", name = "Neha") {
+  await userEvent.type(screen.getByLabelText("Contact number"), phone);
+  await userEvent.type(screen.getByLabelText("Customer name"), name);
+  await userEvent.click(screen.getByRole("button", { name: "Start order" }));
+}
+
+const openTable = async (name) => {
+  await userEvent.click(await screen.findByRole("button", { name: `${name} free` }));
+  await fillGuest();
+};
 const addItem = async (name) => userEvent.click(await screen.findByRole("button", { name: `Add ${name}` }));
 
 describe("Tabs and permissions", () => {
@@ -72,16 +82,125 @@ describe("Taking an order", () => {
     expect(api.called("POST", "/api/billing/orders")[0].body).toEqual({
       order_type: "dine_in",
       table_id: 1,
+      customer_name: "Neha",
+      customer_phone: "9811111111",
     });
+  });
+
+  it("lets a dine-in order be started from the button by choosing a free table", async () => {
+    const { api } = await openBilling(OWNER);
+
+    await userEvent.click(await screen.findByRole("button", { name: "New dine-in" }));
+    await userEvent.selectOptions(screen.getByLabelText("Table"), "2");
+    await fillGuest();
+
+    expect(await screen.findByRole("heading", { name: "Table order #1" })).toBeInTheDocument();
+    expect(api.called("POST", "/api/billing/orders")[0].body).toMatchObject({ table_id: 2 });
+  });
+
+  it("only offers free tables for a new dine-in order", async () => {
+    const existing = {
+      id: 1, order_type: "dine_in", status: "open", table_id: 2, items: [],
+      customer_name: null, customer_phone: null, delivery_address: null,
+    };
+    await openBilling(OWNER, { orders: [existing] });
+
+    await userEvent.click(await screen.findByRole("button", { name: "New dine-in" }));
+
+    const options = within(screen.getByLabelText("Table")).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Choose a table", "T1 · 4 seats"]);
+  });
+
+  it.each([
+    ["New takeaway", "New takeaway order"],
+    ["New dine-in", "New dine-in order"],
+  ])("will not start an order from %s without a name and contact number", async (button, form) => {
+    const { api } = await openBilling(OWNER);
+
+    await userEvent.click(await screen.findByRole("button", { name: button }));
+    expect(screen.getByLabelText("Contact number")).toBeRequired();
+    expect(screen.getByLabelText("Customer name")).toBeRequired();
+    const startButton = within(screen.getByRole("form", { name: form })).getByRole("button", {
+      name: "Start order",
+    });
+    await userEvent.click(startButton);
+
+    expect(api.called("POST", "/api/billing/orders")).toHaveLength(0);
+  });
+
+  it("loads an existing customer's details by itself once the number is typed", async () => {
+    const fake = billingApi(OWNER);
+    fake.routes["GET /api/customers/lookup"] = {
+      id: 77, phone: "9810000001", name: "Asha", visits: 4, is_returning: true,
+    };
+    const api = mockApi(fake.routes);
+    renderApp("/billing", { user: OWNER });
+
+    await userEvent.click(await screen.findByRole("button", { name: "New takeaway" }));
+    await userEvent.type(screen.getByLabelText("Contact number"), "9810000001");
+
+    expect(await screen.findByText(/Existing customer: Asha, 4 visits/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Customer name")).toHaveValue("Asha");
+    expect(screen.queryByRole("button", { name: /Search customer/ })).not.toBeInTheDocument();
+    expect(api.called("GET", "/api/customers/lookup").length).toBeGreaterThan(0);
+  });
+
+  it("empties the name again when the number that loaded it is removed", async () => {
+    const fake = billingApi(OWNER);
+    fake.routes["GET /api/customers/lookup"] = {
+      id: 77, phone: "9810000001", name: "Asha", visits: 4, is_returning: true,
+    };
+    mockApi(fake.routes);
+    renderApp("/billing", { user: OWNER });
+
+    await userEvent.click(await screen.findByRole("button", { name: "New takeaway" }));
+    await userEvent.type(screen.getByLabelText("Contact number"), "9810000001");
+    await waitFor(() => expect(screen.getByLabelText("Customer name")).toHaveValue("Asha"));
+
+    await userEvent.clear(screen.getByLabelText("Contact number"));
+
+    await waitFor(() => expect(screen.getByLabelText("Customer name")).toHaveValue(""));
+    expect(screen.queryByText(/Existing customer/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a name that was typed by hand when the number is removed", async () => {
+    const fake = billingApi(OWNER);
+    fake.routes["GET /api/customers/lookup"] = fail(404, "New customer");
+    mockApi(fake.routes);
+    renderApp("/billing", { user: OWNER });
+
+    await userEvent.click(await screen.findByRole("button", { name: "New takeaway" }));
+    await userEvent.type(screen.getByLabelText("Contact number"), "9810000009");
+    await userEvent.type(screen.getByLabelText("Customer name"), "Ravi");
+    await userEvent.clear(screen.getByLabelText("Contact number"));
+
+    expect(screen.getByLabelText("Customer name")).toHaveValue("Ravi");
+  });
+
+  it("says when no customer has that number", async () => {
+    const fake = billingApi(OWNER);
+    fake.routes["GET /api/customers/lookup"] = fail(404, "New customer");
+    mockApi(fake.routes);
+    renderApp("/billing", { user: OWNER });
+
+    await userEvent.click(await screen.findByRole("button", { name: "New takeaway" }));
+    await userEvent.type(screen.getByLabelText("Contact number"), "9810000009");
+
+    expect(await screen.findByText(/No customer with this number yet/)).toBeInTheDocument();
   });
 
   it("starts a takeaway order without a table", async () => {
     const { api } = await openBilling(OWNER);
 
     await userEvent.click(await screen.findByRole("button", { name: "New takeaway" }));
+    await fillGuest("98100 00001", "Asha");
 
     expect(await screen.findByRole("heading", { name: "Takeaway order #1" })).toBeInTheDocument();
-    expect(api.called("POST", "/api/billing/orders")[0].body).toEqual({ order_type: "takeaway" });
+    expect(api.called("POST", "/api/billing/orders")[0].body).toEqual({
+      order_type: "takeaway",
+      customer_name: "Asha",
+      customer_phone: "98100 00001",
+    });
   });
 
   it("starts a delivery order with the customer's details", async () => {
@@ -112,6 +231,17 @@ describe("Taking an order", () => {
     const lines = within(screen.getByRole("list", { name: "Order items" })).getAllByRole("listitem");
     expect(lines).toHaveLength(1);
     expect(screen.getByLabelText("Paneer Tikka quantity")).toHaveTextContent("2");
+  });
+
+  it("shows each item's price next to its name", async () => {
+    await openBilling(OWNER);
+    await openTable("T1");
+
+    await addItem("Paneer Tikka");
+
+    const line = within(screen.getByRole("list", { name: "Order items" })).getByRole("listitem");
+    expect(line).toHaveTextContent("Paneer Tikka");
+    expect(line).toHaveTextContent("₹200.00");
   });
 
   it("does not offer unavailable items", async () => {

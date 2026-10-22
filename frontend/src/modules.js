@@ -19,14 +19,14 @@ export const MODULES = [
     path: "bookings",
     name: "Bookings",
     stage: 3,
-    live: false,
+    live: true,
     summary: "Dine-out table bookings, slots and reminders.",
   },
   {
     path: "retention",
     name: "Retention",
     stage: 4,
-    live: false,
+    live: true,
     summary: "RFM segments, campaigns and the approval queue.",
   },
 ];
