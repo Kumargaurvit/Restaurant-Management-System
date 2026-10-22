@@ -1,0 +1,21 @@
+# Backend (FastAPI, async) runtime libraries
+fastapi==0.159.1
+uvicorn==0.54.0
+sqlalchemy==2.1.6
+greenlet==3.5.6
+asyncpg==0.32.0
+alembic==1.20.0
+pydantic-settings==2.16.1
+openai==3.36.0
+httpx==0.28.1
+pyjwt==2.15.1
+bcrypt==5.0.0
+apscheduler==3.11.3
+tzdata==2026.5
+
+# Backend test tooling
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# Test database (in-memory SQLite for async tests)
+aiosqlite==0.22.1
