@@ -441,3 +441,10 @@ async def test_a_bill_just_before_restaurant_midnight_stays_on_that_day(
     eleventh = (await client.get(f"{API}/reports/daily?day=2026-06-11", headers=owner_headers)).json()
 
     assert (tenth["bill_count"], eleventh["bill_count"]) == (1, 0)
+
+
+def test_http_client_libraries_are_kept_quiet() -> None:
+    configure_logging("INFO", "text")
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING

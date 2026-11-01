@@ -350,3 +350,36 @@ Stage 2 (the chatbot) is **not built yet**. Bookings and retention were built fi
 
 **Still open:** a real WhatsApp provider; the bot has never run against the real OpenAI API (no key configured); rate limiting and cost tracking; direct replies from the app.
 
+### 2026-11-02: Finishing the plan (branch `ms-phase-4`)
+
+**Starting point.** PR #2 had merged the *backend* for sizes, stock, the logo, sending a bill, the bot's restaurant-info tool, the bot rate limit and structured logging, but with **no database migration and no screens**. A fresh start of `main` would have failed on the menu. Retention (Stage 4) was already built by the other developer, so "what is left" meant finishing everything the audit against this plan had found missing.
+
+**Built**
+- **Migration `04b6e2d8a268`** for `menu_item_variants`, `menu_items.stock_quantity`, `order_items.variant_id` and `restaurant_profile.logo`. One head, tested up, down and up, no drift between models and database. A test now fails if the migrations ever get two heads.
+- **Screens:** sizes (one button per size when ordering; a *Sizes of ...* panel on the menu), stock (counts, low-stock and sold-out badges, restock or stop counting), logo upload (header and bill preview, with friendly refusals), and **Send on WhatsApp** on the bill.
+- **Menu refresh:** the menu reloads after any order change that touches stock, so the numbers staff see are current.
+- **Repository checks:** a test keeps `config.py`, `.env.example`, the README table, `package.json` and `requirements-frontend.txt` in step (two settings had been missing from `.env.example`).
+- **`e2e/`:** the real-browser check (33 steps plus a layout check at phone, tablet and desktop widths) with its own isolated Docker stack `docker-compose.e2e.yml`.
+- **README** rewritten where it was behind: Bookings and Retention sections (they had none), sizes and stock, sending bills, project structure, upgrade note for old local databases, configuration table, testing and out-of-scope lists.
+
+**Real bugs the browser check found** (none were visible to unit tests, which do not load CSS or a real database)
+1. A menu row's name overlapped its price when the row wrapped.
+2. A CSS rule meant to hide the mobile menu button on desktop also hid every quantity +/- button, so on a desktop screen staff could not change or remove an order line (present since Stage 1).
+3. Stock numbers on the order screen did not refresh after items were added, so a sold-out item still showed "2 left".
+4. The daily report miscounted bills made in the 5½ hours after midnight in Delhi when the database ignored time zones. Day bounds are now converted to UTC explicitly.
+
+**Decisions** (change if wrong)
+- Stock is taken when an item is added to an order (not at billing) and given back if the line is reduced, removed or the order cancelled. This is what stops two waiters selling the last portion; it was verified with real concurrent requests on PostgreSQL (12 racers for 5 portions: exactly 5 winners).
+- Stock belongs to the item and is shared by its sizes. Tax comes from the item.
+- The logo is a PNG, JPEG or WebP under 100 KB stored in the database (SVG is refused because it can carry scripts, and the file's first bytes must match its type). The thermal bill text has no logo; it appears in the app header and on the bill preview.
+- A bill sent on WhatsApp is a service message, so the marketing opt-out does not stop it.
+- A guest over the bot's hourly limit gets a notice, the model is not called, and the message is not stored.
+
+**Planned but deliberately not built**
+- Card and UPI payment gateway, and direct thermal-printer (ESC/POS) control: they need a provider account or hardware, and receipts print through the browser.
+- "Delivered" tracking for messages: depends on the WhatsApp provider.
+- A visual drag-and-drop floor plan: the table grid already shows free and occupied tables.
+- The VIP segment: removed on purpose by the other developer.
+
+**Still open:** choosing and connecting a real WhatsApp provider, and running the bot against the real OpenAI API (no key has been configured here; everything around the model is tested with a scripted model).
+

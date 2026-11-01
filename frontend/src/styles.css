@@ -142,7 +142,8 @@ h2 {
 
 /* Desktop: sidebar is always visible. */
 @media (min-width: 900px) {
-  .icon-button {
+  /* Only the mobile menu button hides on desktop. The quantity +/- buttons share the class. */
+  .topbar .icon-button {
     display: none;
   }
 
@@ -586,14 +587,25 @@ select:focus-visible {
 }
 
 .print-area {
-  margin: 0;
   padding: 0.75rem;
   border: 1px dashed var(--border);
   background: var(--bg);
+  overflow-x: auto;
+}
+
+.print-area pre {
+  margin: 0;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 0.8rem;
   line-height: 1.35;
-  overflow-x: auto;
+}
+
+.print-logo {
+  display: block;
+  max-width: 160px;
+  max-height: 80px;
+  margin: 0 auto 0.5rem;
+  object-fit: contain;
 }
 
 @media print {
@@ -614,6 +626,10 @@ select:focus-visible {
     border: none;
     background: #fff;
     color: #000;
+    font-size: 11pt;
+  }
+
+  .print-area pre {
     font-size: 11pt;
   }
 }
@@ -792,4 +808,56 @@ textarea {
 
 .message-body {
   white-space: pre-wrap;
+}
+
+/* ---------- logo, sizes and stock ---------- */
+
+.brand-logo {
+  height: 2rem;
+  width: auto;
+  max-width: 6rem;
+  object-fit: contain;
+}
+
+.logo-preview {
+  display: block;
+  max-width: 160px;
+  max-height: 80px;
+  object-fit: contain;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sizes {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.sizes ul {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.sizes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+}
+
+.item-sub {
+  display: block;
+  font-size: 0.85rem;
+}
+
+.badge-low {
+  background: var(--bad-soft);
+  color: var(--bad);
 }

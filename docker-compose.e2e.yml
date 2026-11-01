@@ -1,0 +1,27 @@
+# Isolated stack for the browser check in e2e/. Use it ON TOP of docker-compose.yml:
+#
+#   docker compose -p rmse2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build
+#   (cd e2e && npm install && npm test)
+#   docker compose -p rmse2e -f docker-compose.yml -f docker-compose.e2e.yml down -v
+#
+# It has its own project name and database volume, different host ports (web 5174, API 8013),
+# no published database port, and the WhatsApp webhook switched on. It never touches your
+# normal database. The check registers a restaurant, so it needs this fresh database each run.
+services:
+  db:
+    ports: !reset []
+  backend:
+    ports: !override
+      - "8013:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/restaurant
+      CORS_ORIGINS: '["http://localhost:5174"]'
+      WHATSAPP_WEBHOOK_SECRET: check-secret
+      SCHEDULER_ENABLED: "false"
+      OWNER_CONTACT: "98100 11111"
+      OPENAI_API_KEY: ""
+  frontend:
+    ports: !override
+      - "5174:5173"
+    environment:
+      VITE_API_URL: http://localhost:8013

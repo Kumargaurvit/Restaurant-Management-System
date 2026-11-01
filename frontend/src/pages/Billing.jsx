@@ -31,6 +31,16 @@ export default function Billing() {
     load();
   }, [load]);
 
+  // Reload just the menu (stock changes as orders are taken, changed or cancelled).
+  const reloadMenuItems = useCallback(async () => {
+    try {
+      const menuItems = await request("/api/billing/menu/items");
+      setData((current) => (current ? { ...current, menuItems } : current));
+    } catch {
+      // The next full load will correct it; a failed refresh must not block ordering.
+    }
+  }, []);
+
   const tabs = [
     { id: "orders", label: "Orders" },
     ...(canManage(user)
@@ -67,7 +77,7 @@ export default function Billing() {
       )}
       {!data && !error && <p className="muted">Loading...</p>}
 
-      {data && tab === "orders" && <OrdersTab {...data} />}
+      {data && tab === "orders" && <OrdersTab {...data} onStockChange={reloadMenuItems} />}
       {data && tab === "menu" && <MenuTab {...data} reload={load} />}
       {tab === "customers" && <CustomersTab />}
       {tab === "insights" && <InsightsTab />}

@@ -60,6 +60,7 @@ describe("Receipt details", () => {
       gstin: "07AAAAA0000A1Z5",
       fssai: "12345678901234",
       receipt_footer: "Thanks!",
+      logo: "",
     });
   });
 

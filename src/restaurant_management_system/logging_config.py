@@ -43,3 +43,6 @@ def configure_logging(level: str = "INFO", fmt: str = "text") -> None:
     )
     root.addHandler(handler)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    # HTTP client libraries log every request at INFO (including calls to OpenAI); keep that quiet.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
