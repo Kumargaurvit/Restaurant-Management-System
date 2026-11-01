@@ -39,8 +39,13 @@ export function AuthProvider({ children }) {
       user,
       phase,
       logout,
+      renameRestaurant: async (name) => {
+        const result = await request("/api/restaurant", { method: "PUT", body: { name } });
+        setUser((current) => ({ ...current, restaurant_name: result.name }));
+      },
       login: (email, password) => signIn("/api/auth/login", { email, password }),
-      setup: (name, email, password) => signIn("/api/auth/bootstrap", { name, email, password }),
+      setup: (name, email, password, restaurantName) =>
+        signIn("/api/auth/bootstrap", { name, email, password, restaurant_name: restaurantName }),
     }),
     [user, phase, logout, signIn],
   );

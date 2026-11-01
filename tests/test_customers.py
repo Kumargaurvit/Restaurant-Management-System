@@ -8,8 +8,8 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from restaurant_management_system.billing.models import Bill
-from restaurant_management_system.customers.services import normalize_phone
-from tests.helpers import place_order
+from restaurant_management_system.customers.services import is_opt_out_message, normalize_phone
+from tests.helpers import place_order  # noqa: F401  (also imported by test_retention)
 
 API = "/api/billing"
 
@@ -416,3 +416,41 @@ async def test_top_customers_can_be_limited_to_recent_days(
     recent = (await client.get("/api/reports/top-customers?days=30", headers=owner_headers)).json()
 
     assert [c["name"] for c in recent] == ["Bala"]
+
+
+# ------------------------------------------------------ marketing opt-out
+
+
+@pytest.mark.parametrize("text", ["STOP", " stop ", "Unsubscribe!", "opt out"])
+def test_opt_out_messages_are_recognised(text: str) -> None:
+    assert is_opt_out_message(text)
+
+
+@pytest.mark.parametrize("text", ["stop by tomorrow", "book a table", ""])
+def test_other_messages_are_not_opt_outs(text: str) -> None:
+    assert not is_opt_out_message(text)
+
+
+async def test_staff_can_opt_a_customer_out_and_back_in(
+    client: AsyncClient, menu, owner_headers
+) -> None:
+    await place_order(client, owner_headers, menu, {"paneer": 1}, phone="9876543210")
+    customer = (await client.get("/api/customers", headers=owner_headers)).json()[0]
+    assert customer["marketing_opt_out"] is False
+
+    url = f"/api/customers/{customer['id']}/marketing-opt-out"
+    out = (await client.put(url, headers=owner_headers, json={"opt_out": True})).json()
+    assert out["marketing_opt_out"] is True
+    assert out["opted_out_at"] is not None
+    assert out["visits"] == 1
+
+    back = (await client.put(url, headers=owner_headers, json={"opt_out": False})).json()
+    assert back["marketing_opt_out"] is False
+    assert back["opted_out_at"] is None
+
+
+async def test_opt_out_unknown_customer_is_404(client: AsyncClient, owner_headers) -> None:
+    response = await client.put(
+        "/api/customers/999/marketing-opt-out", headers=owner_headers, json={"opt_out": True}
+    )
+    assert response.status_code == 404

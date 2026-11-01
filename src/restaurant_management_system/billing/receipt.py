@@ -37,19 +37,22 @@ def _wrap(text: str) -> list[str]:
 
 
 def _header(profile: RestaurantProfile | None) -> list[str]:
+    """Restaurant name, then address and registration numbers when saved."""
     if profile is None:
         return []
     lines = []
     if profile.name:
         lines.append(_center(profile.name.upper()))
-    lines.extend(_center(part) for part in _wrap(profile.address))
+    details = [*_wrap(profile.address)]
     if profile.phone:
-        lines.append(_center(f"Ph: {profile.phone}"))
+        details.append(f"Ph: {profile.phone}")
     if profile.gstin:
-        lines.append(_center(f"GSTIN: {profile.gstin}"))
+        details.append(f"GSTIN: {profile.gstin}")
     if profile.fssai:
-        lines.append(_center(f"FSSAI: {profile.fssai}"))
-    if lines:
+        details.append(f"FSSAI: {profile.fssai}")
+    lines.extend(_center(part) for part in details)
+    # A divider only when there is more than the name, so a name-only receipt stays compact.
+    if details:
         lines.append(_rule("-"))
     return lines
 

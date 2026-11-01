@@ -41,14 +41,33 @@ describe("Dashboard", () => {
     }
   });
 
-  it("marks billing as live and the rest by stage", async () => {
+  it("marks every finished module as live", async () => {
     mockApi(baseRoutes(OWNER));
     renderApp("/", { user: OWNER });
     await screen.findByText("Online");
 
     const content = screen.getByRole("main");
     expect(within(content).getByRole("link", { name: /Billing/ })).toHaveTextContent("Live");
-    expect(within(content).getByRole("link", { name: /Bookings/ })).toHaveTextContent("Stage 3");
+    expect(within(content).getByRole("link", { name: /Bookings/ })).toHaveTextContent("Live");
+    expect(within(content).getByRole("link", { name: /Retention/ })).toHaveTextContent("Live");
+    expect(within(content).getByRole("link", { name: /WhatsApp Bot/ })).toHaveTextContent("Live");
+  });
+});
+
+describe("Header", () => {
+  it("shows the restaurant name after Restaurant Manager", async () => {
+    const user = { ...OWNER, restaurant_name: "Spice Garden" };
+    mockApi(baseRoutes(user));
+    renderApp("/", { user });
+
+    expect(await screen.findByText("Restaurant Manager - Spice Garden")).toBeInTheDocument();
+  });
+
+  it("shows just Restaurant Manager when no name is saved", async () => {
+    mockApi(baseRoutes(OWNER));
+    renderApp("/", { user: OWNER });
+
+    expect(await screen.findByText("Restaurant Manager")).toBeInTheDocument();
   });
 });
 

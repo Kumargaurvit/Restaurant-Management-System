@@ -20,8 +20,11 @@ async function startDineIn(user, extraRoutes = {}) {
   Object.assign(fake.routes, extraRoutes);
   const api = mockApi(fake.routes);
   renderApp("/billing", { user });
-  await userEvent.click(await screen.findByRole("button", { name: "T1 free" }));
-  await screen.findByRole("heading", { name: "Table order #1" });
+  // A delivery order may start without a guest, which is what these tests need.
+  await userEvent.click(await screen.findByRole("button", { name: "New delivery" }));
+  await userEvent.type(screen.getByLabelText("Delivery address"), "12 Lodhi Road");
+  await userEvent.click(screen.getByRole("button", { name: "Start order" }));
+  await screen.findByRole("heading", { name: "Delivery order #1" });
   return { ...fake, api };
 }
 

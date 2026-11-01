@@ -360,6 +360,10 @@ describe("Applying a running offer at billing", () => {
     mockApi(fake.routes);
     renderApp("/billing", { user });
     await userEvent.click(await screen.findByRole("button", { name: "T1 free" }));
+    // Starting an order asks for the guest's contact number and name first.
+    await userEvent.type(screen.getByLabelText("Contact number"), "9811111111");
+    await userEvent.type(screen.getByLabelText("Customer name"), "Neha");
+    await userEvent.click(screen.getByRole("button", { name: "Start order" }));
     await userEvent.click(await screen.findByRole("button", { name: "Add Paneer Tikka" }));
     await screen.findByLabelText("Paneer Tikka quantity");
   }

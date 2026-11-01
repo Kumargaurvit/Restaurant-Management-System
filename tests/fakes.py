@@ -56,11 +56,14 @@ def unavailable() -> LLMUnavailableError:
 
 
 class RecordingProvider:
+    """Stands in for the WhatsApp provider and remembers what was sent."""
+
     def __init__(self, fail: bool = False) -> None:
         self.sent: list[tuple[str, str]] = []
         self.fail = fail
 
-    async def send_text(self, phone: str, text: str) -> None:
+    async def send(self, phone: str, body: str) -> bool:
         if self.fail:
             raise RuntimeError("provider is down")
-        self.sent.append((phone, text))
+        self.sent.append((phone, body))
+        return True

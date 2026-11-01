@@ -249,6 +249,39 @@ Scope for Friday should be confirmed against this order. Anything not finished m
 - Mobile numbers are personal data. Consent and opt-out for marketing messages must be added before any WhatsApp campaign (DPDP Act 2023).
 - Orders created before this change have no customer link and cannot be backfilled.
 
+### 2026-10-22: Stage 3 (bookings) and Stage 4 (retention)
+
+Stage 2 (the chatbot) is **not built yet**. Bookings and retention were built first; both work from the web app.
+
+**Done**
+- `messaging/`: a `MessageProvider` interface (default `log` provider records messages without sending), a `messages` log table, and `POST /api/messaging/inbound` for the provider webhook (needs `WHATSAPP_WEBHOOK_SECRET`). It logs guest replies and handles STOP / START.
+- Bookings: owner-set opening hours, slot length, party limit, booking window and reminder lead time. Availability is checked against active tables and the bookings that overlap the slot. Status flow requested → confirmed → seated → completed, with no-show and cancelled. Confirmation, cancellation and reminder messages. Reminders run every 10 minutes (APScheduler) or on demand.
+- Retention: RFM scores (1–5) and segments (regular, new, at risk, lost) with owner-set thresholds. Campaign rules (segment, template, automatic or approval, cooldown). Approval queue. Results report (sent, waiting, rejected, opted out, replied, returned).
+- Marketing opt-out: customer fields, staff toggle on the Customers screen, STOP / START replies through the webhook, and a check when a message is queued, sent or approved.
+- Web app: the Bookings and Retention tabs are live. Migration `b2d4f6a8c0e1`.
+
+**Decisions** (change if wrong)
+- A booking holds one table for the slot. Parties are packed onto tables smallest-fit-first, and seats are not pooled across tables. No table number is stored on the booking.
+- Staff-created bookings start as *requested*; confirming one sends the guest a message.
+- Booking and bill messages are service messages and ignore the marketing opt-out. Campaign messages never do.
+- Segment order: lost, then at risk, then new, then regular. Customers with no bill are not segmented.
+- Every campaign message ends with "Reply STOP to opt out."
+- A rule messages a guest at most once per cooldown (30 days by default), including rejected ones, so a rejected message is not re-queued the next day.
+- Automatic rules run daily at 11:00 (restaurant timezone). Approval rules queue when the owner presses "Run rules now".
+- "Delivered" is not tracked: it depends on the provider. Replied and returned are counted instead.
+- Offers are not built (they belong to the chatbot stage).
+
+**Next:** Stage 2 (chatbot), which should call `booking.services.create_booking` and `get_provider`, and check `customers.services.can_receive_marketing` before any marketing message.
+
+### 2026-10-22: Restaurant name, new-order forms and bill changes
+
+**Done**
+- The restaurant name is asked for when the owner registers, stored in `restaurant_profile` and returned with the signed-in user. The header reads "Restaurant Manager - <name>". The owner can rename it in Settings.
+- The name is the first line of the customer bill (above TAX INVOICE). The kitchen ticket keeps its KITCHEN ORDER heading. Booking and campaign messages use the saved name instead of the old `RESTAURANT_NAME` setting, which is removed.
+- Order lines show each item's price next to its name. The printed bill already showed quantity x price and the line amount.
+- Takeaway and dine-in (new button, or tap a free table) open the same form: contact number and customer name are both required, and the number can be searched to find an existing customer and fill in their name. The server still accepts orders without a customer (delivery, older clients).
+- The VIP segment and its thresholds are removed. Migration `c3e5a7b9d1f2` drops the columns and pauses any rule that targeted VIP.
+
 ### 2026-10-22: Stage 1 completion and Stage 2 (WhatsApp chatbot), branch `ms-phase-2`
 
 **Stage 1 items completed**
@@ -284,3 +317,36 @@ Scope for Friday should be confirmed against this order. Anything not finished m
 - The bot has never been run against the real OpenAI API, because no key is configured. Everything around the model is tested with a scripted model; the real client is tested against a fake SDK response.
 
 **Next:** Stage 3 (dine-out booking), which also upgrades the bot's availability tool and adds a booking tool.
+
+### 2026-11-01: Merging `main` (bookings, retention, messaging) with our chatbot, branch `ms-phase-2-chatbot-check`
+
+**Comparison.** `main` already held the other developer's work (PR #1, `gk-phase-2-3-build`): bookings, retention, a messaging layer, the restaurant name, and the opt-out. His own notes say "Stage 2 (the chatbot) is **not built yet**". What he called phase 2 is the messaging layer (a `MessageProvider` interface, a `messages` log, and an inbound webhook that only handles STOP and START). That is infrastructure the chatbot needs, not a chatbot: no model, offers, availability, bills or hand-off. So there was no competing chatbot to keep or remove; our chatbot is the chatbot, and his messaging layer stays because bookings and retention depend on it.
+
+**What was kept from `main` unchanged in behaviour:** bookings (settings, slot availability, status flow, reminders), retention (RFM, rules, approval queue, report), the marketing opt-out, the scheduler, restaurant name at registration, the new-order form, all of his tests.
+
+**What was kept from our branch:** chatbot (model tools, offers, conversations, hand-off, test chat), customer insights, staff management, menu and table editing, receipt details, the configurable password-hashing cost.
+
+**What was reconciled**
+- **One messaging layer.** Our `messaging/base.py`, `console.py` and `factory.py` were removed in favour of his `messaging/provider.py` (`send(phone, body) -> bool`, `build_provider`, `send_message`).
+- **One inbound webhook:** `POST /api/messaging/inbound`. STOP and START are handled exactly as before; every other message is logged, answered by the bot, and the reply is sent through the provider and logged. Our separate `/api/chat/webhook` was removed. Setting names follow his: `WHATSAPP_PROVIDER`, `WHATSAPP_WEBHOOK_SECRET`, `OWNER_CONTACT`, `SCHEDULER_ENABLED`.
+- **Restaurant profile.** Both of us had built it. His name API is unchanged (`GET`/`PUT /api/restaurant`, owner renames, his tests rely on it). Our address, phone, GSTIN, FSSAI and footer live at `/api/restaurant/profile` (owner and manager can edit). The receipt prints the name alone as a compact header, and adds the details under it when they are saved.
+- **Migrations.** Ours branched from the same parent as his and also created `restaurant_profile`, which would have produced two heads. Our two migrations were deleted and replaced by one on top of his chain: `cf61375cfc10` (receipt detail columns and the chatbot tables). Tested up, down and up again; no drift between models and database.
+- **Tests.** His tests were left alone except one expectation: his dashboard test said the WhatsApp Bot was "Stage 2"; it is now live.
+
+**Chatbot upgrades made possible by his booking engine** (his notes said the chatbot should call it)
+- `check_table_availability` with a date lists the free booking slots for a party, using his availability rules. Without a date it answers walk-in availability and also respects opening hours and tables held by bookings.
+- `create_booking_request` creates a booking with source `whatsapp`, status *requested*. Staff confirm it in Bookings and the guest is messaged by his existing flow. A guest may hold at most 3 upcoming bookings through the bot.
+- `get_my_bookings` lists the guest's own upcoming bookings.
+- The hand-off shows `OWNER_CONTACT` when it is configured, and the system prompt now carries the restaurant name and today's date so "tomorrow" and "Saturday" resolve correctly.
+
+**Decisions** (change if wrong)
+- The bot cannot change or cancel a booking; it hands those to a person.
+- Bot replies are service messages, so the marketing opt-out does not stop them. Campaign messages still obey the opt-out as before.
+- Guests who book through the bot become customers, because his booking code creates the customer record.
+
+**Heads-up about local databases.**
+- A database made from `main` (the other developer's): just run `alembic upgrade head`. It applies `cf61375cfc10` and keeps all data.
+- The local database made from our branch **before** this merge has revisions that no longer exist (`9120eff7227e`, `6ee78296e767`) and lacks his bookings, retention and messaging tables, so it cannot be upgraded or stamped into the new chain. Recreate it with `docker compose down -v` then `docker compose up -d` (this deletes the local data).
+
+**Still open:** a real WhatsApp provider; the bot has never run against the real OpenAI API (no key configured); rate limiting and cost tracking; direct replies from the app.
+

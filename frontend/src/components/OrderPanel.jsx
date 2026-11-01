@@ -208,7 +208,7 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
           {order.items.map((line) => (
             <li key={line.id}>
               <span className="line-name">
-                {line.name}
+                {line.name} <span className="muted">{formatMoney(line.unit_price)}</span>
                 {line.kitchen_ticket_id !== null && <span className="badge badge-ok">sent</span>}
               </span>
               {isOpen ? (

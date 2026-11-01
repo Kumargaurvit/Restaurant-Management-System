@@ -14,7 +14,7 @@ from restaurant_management_system.chatbot.llm import (
 )
 from restaurant_management_system.chatbot.service import FALLBACK_REPLY
 from restaurant_management_system.config import get_settings
-from restaurant_management_system.messaging.factory import get_provider
+from restaurant_management_system.messaging.provider import get_provider
 from tests.fakes import RecordingProvider, ScriptedLLM, calls, say, unavailable
 from tests.fakes import call as tool_call
 from tests.helpers import place_order
@@ -44,8 +44,18 @@ def use_llm(app):
 
 
 @pytest.fixture
+def daytime(monkeypatch):
+    """Pin the bot's clock to 2 pm Monday in Delhi, inside the default opening hours."""
+    from restaurant_management_system.chatbot import service
+
+    fixed = datetime(2026, 11, 2, 8, 30, tzinfo=UTC)
+    monkeypatch.setattr(service, "utcnow", lambda: fixed)
+    return fixed
+
+
+@pytest.fixture
 def webhook_secret(monkeypatch) -> str:
-    monkeypatch.setenv("WEBHOOK_SECRET", "s3cret")
+    monkeypatch.setenv("WHATSAPP_WEBHOOK_SECRET", "s3cret")
     get_settings.cache_clear()
     return "s3cret"
 
@@ -94,6 +104,8 @@ async def test_model_receives_system_prompt_with_restaurant_name_and_tools(
     assert {t["function"]["name"] for t in first["tools"]} == {
         "get_active_offers",
         "check_table_availability",
+        "create_booking_request",
+        "get_my_bookings",
         "get_my_recent_bills",
         "get_bill_receipt",
         "request_human_handoff",
@@ -219,7 +231,7 @@ async def test_offer_times_are_given_in_restaurant_time(client: AsyncClient, own
 # ------------------------------------------------------ table availability
 
 
-async def test_table_free_for_party(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+async def test_table_free_for_party(client: AsyncClient, menu, owner_headers, use_llm, daytime) -> None:
     llm = use_llm(ScriptedLLM(tool_call("check_table_availability", party_size=2), say("Yes")))
 
     await ask(client, owner_headers, "space for 2?")
@@ -227,7 +239,7 @@ async def test_table_free_for_party(client: AsyncClient, menu, owner_headers, us
     result = llm.last_tool_result
     assert result["can_seat_right_now"] is True
     assert result["free_tables_that_fit"] == 1
-    assert "Reservations are not available" in result["note"]
+    assert "booking request" in result["note"]
 
 
 async def test_occupied_table_is_not_counted(client: AsyncClient, menu, owner_headers, use_llm) -> None:
@@ -242,7 +254,7 @@ async def test_occupied_table_is_not_counted(client: AsyncClient, menu, owner_he
     assert llm.last_tool_result["free_tables_that_fit"] == 0
 
 
-async def test_table_becomes_free_again_after_billing(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+async def test_table_becomes_free_again_after_billing(client: AsyncClient, menu, owner_headers, use_llm, daytime) -> None:
     order = (await client.post(
         "/api/billing/orders", headers=owner_headers, json={"order_type": "dine_in", "table_id": menu["table_id"]}
     )).json()
@@ -507,65 +519,135 @@ async def test_several_tools_can_run_in_one_turn(client: AsyncClient, menu, owne
     assert json.loads(assistant["tool_calls"][1]["function"]["arguments"]) == {"party_size": 2}
 
 
-# ---------------------------------------------------------------- webhook
+# ----------------------------------------------------------------- inbound
+
+INBOUND = "/api/messaging/inbound"
 
 
-async def test_webhook_is_disabled_without_a_secret(client: AsyncClient, use_llm, provider) -> None:
+async def test_inbound_is_disabled_without_a_secret(client: AsyncClient, use_llm, provider) -> None:
     use_llm(ScriptedLLM(say("x")))
 
-    response = await client.post("/api/chat/webhook", json={"phone": GUEST, "text": "hi"})
+    response = await client.post(INBOUND, json={"phone": GUEST, "text": "hi"})
 
-    assert response.status_code == 503
+    assert response.status_code == 401
+    assert provider.sent == []
 
 
-async def test_webhook_rejects_a_missing_or_wrong_secret(client: AsyncClient, use_llm, provider, webhook_secret) -> None:
+async def test_inbound_rejects_a_missing_or_wrong_secret(client: AsyncClient, use_llm, provider, webhook_secret) -> None:
     use_llm(ScriptedLLM(say("x")))
 
-    missing = await client.post("/api/chat/webhook", json={"phone": GUEST, "text": "hi"})
-    wrong = await client.post(
-        "/api/chat/webhook", json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": "nope"}
-    )
+    missing = await client.post(INBOUND, json={"phone": GUEST, "text": "hi"})
+    wrong = await client.post(INBOUND, json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": "nope"})
 
     assert (missing.status_code, wrong.status_code) == (401, 401)
     assert provider.sent == []
 
 
-async def test_webhook_replies_and_sends_via_the_provider(client: AsyncClient, use_llm, provider, webhook_secret) -> None:
+async def test_inbound_message_is_answered_by_the_bot_and_sent_via_the_provider(
+    client: AsyncClient, use_llm, provider, webhook_secret
+) -> None:
     use_llm(ScriptedLLM(say("Hello from the restaurant")))
 
     response = await client.post(
-        "/api/chat/webhook",
-        json={"phone": "+91 98100 00001", "text": "hi"},
-        headers={"X-Webhook-Secret": webhook_secret},
+        INBOUND, json={"phone": "+91 98100 00001", "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret}
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Hello from the restaurant"
+    assert response.json() == {"action": "replied"}
     assert provider.sent == [(GUEST, "Hello from the restaurant")]
 
 
-async def test_webhook_still_succeeds_when_sending_fails(app, client: AsyncClient, use_llm, webhook_secret, owner_headers) -> None:
+async def test_inbound_and_reply_are_both_in_the_message_log(
+    client: AsyncClient, use_llm, provider, webhook_secret, engine
+) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from restaurant_management_system.messaging.models import Message
+
+    use_llm(ScriptedLLM(say("Hi there")))
+    await client.post(INBOUND, json={"phone": GUEST, "text": "hello"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    async with async_sessionmaker(engine)() as session:
+        rows = (await session.scalars(select(Message).order_by(Message.id))).all()
+
+    assert [(m.direction, m.kind, m.body, m.status) for m in rows] == [
+        ("in", "chat", "hello", "sent"),
+        ("out", "chat", "Hi there", "sent"),
+    ]
+
+
+async def test_stop_and_start_are_handled_without_asking_the_bot(
+    client: AsyncClient, use_llm, provider, webhook_secret
+) -> None:
+    llm = use_llm(ScriptedLLM())  # any call to the model would fail the test
+
+    stop = await client.post(INBOUND, json={"phone": GUEST, "text": "STOP"}, headers={"X-Webhook-Secret": webhook_secret})
+    start = await client.post(INBOUND, json={"phone": GUEST, "text": "start"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    assert (stop.json(), start.json()) == ({"action": "opted_out"}, {"action": "opted_in"})
+    assert llm.requests == []
+
+
+async def test_a_message_that_only_contains_stop_is_still_a_chat(
+    client: AsyncClient, use_llm, provider, webhook_secret
+) -> None:
+    use_llm(ScriptedLLM(say("Sure, I can help.")))
+
+    response = await client.post(
+        INBOUND,
+        json={"phone": GUEST, "text": "please don't stop the music, any offers?"},
+        headers={"X-Webhook-Secret": webhook_secret},
+    )
+
+    assert response.json() == {"action": "replied"}
+
+
+async def test_inbound_still_succeeds_when_sending_fails(
+    app, client: AsyncClient, use_llm, webhook_secret, owner_headers
+) -> None:
     app.dependency_overrides[get_provider] = lambda: RecordingProvider(fail=True)
     use_llm(ScriptedLLM(say("Hello")))
 
-    response = await client.post(
-        "/api/chat/webhook", json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret}
-    )
+    response = await client.post(INBOUND, json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret})
 
     assert response.status_code == 200
-    detail_list = (await client.get("/api/chat/conversations", headers=owner_headers)).json()
-    assert detail_list[0]["message_count"] == 2
+    conversations = (await client.get("/api/chat/conversations", headers=owner_headers)).json()
+    assert conversations[0]["message_count"] == 2
 
 
-async def test_webhook_validates_the_payload(client: AsyncClient, use_llm, provider, webhook_secret) -> None:
-    headers = {"X-Webhook-Secret": webhook_secret}
+async def test_inbound_without_an_api_key_replies_with_the_fallback_and_flags_a_person(
+    client: AsyncClient, use_llm, provider, webhook_secret, owner_headers
+) -> None:
+    use_llm(None)
 
-    assert (await client.post("/api/chat/webhook", json={"phone": GUEST}, headers=headers)).status_code == 422
-    assert (await client.post("/api/chat/webhook", json={"phone": "123", "text": "hi"}, headers=headers)).status_code == 422
-    assert (await client.post("/api/chat/webhook", json={"phone": GUEST, "text": ""}, headers=headers)).status_code == 422
+    await client.post(INBOUND, json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    assert provider.sent[0][1] == FALLBACK_REPLY
+    assert (await client.get("/api/chat/conversations", headers=owner_headers)).json()[0]["needs_human"] is True
 
 
-async def test_simulator_never_sends_to_the_provider(client: AsyncClient, owner_headers, use_llm, provider) -> None:
+async def test_fallback_reply_includes_the_owner_contact_when_configured(
+    client: AsyncClient, use_llm, provider, webhook_secret, monkeypatch
+) -> None:
+    monkeypatch.setenv("OWNER_CONTACT", "98100 11111")
+    get_settings.cache_clear()
+    use_llm(None)
+
+    await client.post(INBOUND, json={"phone": GUEST, "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    assert provider.sent[0][1].endswith("For anything urgent, contact 98100 11111.")
+
+
+async def test_inbound_validates_the_phone_number(client: AsyncClient, use_llm, provider, webhook_secret) -> None:
+    use_llm(ScriptedLLM(say("x")))
+
+    response = await client.post(INBOUND, json={"phone": "123", "text": "hi"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    assert response.status_code == 422
+
+
+async def test_simulator_never_sends_or_logs_to_the_message_provider(client: AsyncClient, owner_headers, use_llm, provider) -> None:
     use_llm(ScriptedLLM(say("test reply")))
 
     await ask(client, owner_headers, "hi")
@@ -687,3 +769,294 @@ def test_api_key_creates_the_client(monkeypatch) -> None:
 
     assert isinstance(get_optional_llm(), OpenAIClient)
     get_llm_client.cache_clear()
+
+
+# ------------------------------------------------- walk-in vs opening hours
+
+
+async def test_nobody_can_walk_in_when_the_restaurant_is_closed(
+    client: AsyncClient, menu, owner_headers, use_llm, monkeypatch
+) -> None:
+    from restaurant_management_system.chatbot import service
+
+    night = datetime(2026, 11, 2, 18, 0, tzinfo=UTC)  # 11:30 pm in Delhi, after closing
+    monkeypatch.setattr(service, "utcnow", lambda: night)
+    llm = use_llm(ScriptedLLM(tool_call("check_table_availability", party_size=2), say("We are closed")))
+
+    await ask(client, owner_headers, "space for 2?")
+
+    result = llm.last_tool_result
+    assert result["open_now"] is False
+    assert result["can_seat_right_now"] is False
+    assert (result["opens_at"], result["closes_at"]) == ("11:00", "23:00")
+
+
+async def test_a_booking_for_this_hour_blocks_the_walk_in(
+    client: AsyncClient, menu, owner_headers, use_llm, daytime
+) -> None:
+    from tests.test_bookings import booking_body  # noqa: F401  (documents the booking shape)
+
+    day = datetime(2026, 11, 2).date()  # the pinned "today"
+    await client.post(
+        "/api/bookings", headers=owner_headers,
+        json={"guest_name": "Neha", "phone": OTHER, "party_size": 4, "booking_date": day.isoformat(), "start_time": "14:00"},
+    )
+    llm = use_llm(ScriptedLLM(tool_call("check_table_availability", party_size=2), say("Sorry")))
+
+    await ask(client, owner_headers, "space for 2?")
+
+    assert llm.last_tool_result["free_tables_that_fit"] == 1  # the table is physically empty
+    assert llm.last_tool_result["can_seat_right_now"] is False  # but a booking holds it
+
+
+# ----------------------------------------------------- bookings through the bot
+
+
+def _returns(value):
+    """A no-argument dependency override (FastAPI would read lambda defaults as query params)."""
+    return lambda: value
+
+
+def day_ahead(days: int = 2) -> str:
+    from zoneinfo import ZoneInfo
+
+    return (datetime.now(ZoneInfo("Asia/Kolkata")).date() + timedelta(days=days)).isoformat()
+
+
+async def test_availability_for_a_date_lists_free_slots(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+    day = day_ahead()
+    llm = use_llm(ScriptedLLM(tool_call("check_table_availability", party_size=2, date=day), say("Free at 11:00")))
+
+    await ask(client, owner_headers, "table for 2 on that day?")
+
+    result = llm.last_tool_result
+    assert result["date"] == day
+    assert result["slot_minutes"] == 90
+    assert result["free_slots"][0] == "11:00"
+    assert {"time": "11:00", "free": True} in result["slots"]
+
+
+async def test_a_booked_slot_is_reported_as_not_free(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+    day = day_ahead()
+    await client.post(
+        "/api/bookings", headers=owner_headers,
+        json={"guest_name": "Neha", "phone": OTHER, "party_size": 4, "booking_date": day, "start_time": "11:00"},
+    )
+    llm = use_llm(ScriptedLLM(tool_call("check_table_availability", party_size=2, date=day), say("ok")))
+
+    await ask(client, owner_headers, "table for 2?")
+
+    free = llm.last_tool_result["free_slots"]
+    assert "11:00" not in free
+    assert "12:30" in free  # the 90-minute 11:00 booking ends exactly when this slot starts
+    assert "14:00" in free
+
+
+@pytest.mark.parametrize(
+    ("args", "fragment"),
+    [
+        ({"party_size": 2, "date": "tomorrow"}, "YYYY-MM-DD"),
+        ({"party_size": 2, "date": "2020-01-01"}, "already passed"),
+        ({"party_size": 2, "date": "2099-01-01"}, "days ahead"),
+        ({"party_size": 13, "date": "DAY"}, "Larger groups"),
+    ],
+)
+async def test_availability_rejects_bad_dates_and_big_groups(
+    client: AsyncClient, menu, owner_headers, use_llm, args, fragment
+) -> None:
+    args = {**args, "date": day_ahead() if args["date"] == "DAY" else args["date"]}
+    llm = use_llm(ScriptedLLM(tool_call("check_table_availability", **args), say("ok")))
+
+    await ask(client, owner_headers, "table?")
+
+    assert fragment in llm.last_tool_result["error"]
+
+
+async def test_the_bot_can_request_a_booking(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+    day = day_ahead()
+    llm = use_llm(ScriptedLLM(
+        tool_call("create_booking_request", guest_name="Neha", party_size=2, date=day, time="12:30", notes="Birthday"),
+        say("Requested!"),
+    ))
+
+    await ask(client, owner_headers, "book for 2 at 12:30", phone=GUEST)
+
+    result = llm.last_tool_result
+    assert (result["date"], result["time"], result["party_size"], result["status"]) == (day, "12:30", 2, "requested")
+    assert "confirm" in result["message"]
+    bookings = (await client.get(f"/api/bookings?booking_date={day}", headers=owner_headers)).json()
+    assert [(b["guest_name"], b["phone"], b["status"], b["source"], b["notes"]) for b in bookings] == [
+        ("Neha", GUEST, "requested", "whatsapp", "Birthday")
+    ]
+
+
+async def test_a_bot_booking_uses_the_chats_phone_not_one_from_the_model(
+    client: AsyncClient, menu, owner_headers, use_llm
+) -> None:
+    day = day_ahead()
+    use_llm(ScriptedLLM(
+        tool_call("create_booking_request", guest_name="Neha", party_size=2, date=day, time="11:00", phone=OTHER),
+        say("done"),
+    ))
+
+    await ask(client, owner_headers, "book", phone=GUEST)
+
+    bookings = (await client.get(f"/api/bookings?booking_date={day}", headers=owner_headers)).json()
+    assert [b["phone"] for b in bookings] == [GUEST]
+
+
+async def test_staff_confirming_a_bot_booking_sends_the_guest_a_message(
+    client: AsyncClient, menu, owner_headers, use_llm, provider
+) -> None:
+    day = day_ahead()
+    use_llm(ScriptedLLM(tool_call("create_booking_request", guest_name="Neha", party_size=2, date=day, time="11:00"), say("ok")))
+    await ask(client, owner_headers, "book", phone=GUEST)
+    booking_id = (await client.get(f"/api/bookings?booking_date={day}", headers=owner_headers)).json()[0]["id"]
+
+    await client.post(f"/api/bookings/{booking_id}/status", headers=owner_headers, json={"status": "confirmed"})
+
+    assert len(provider.sent) == 1
+    assert provider.sent[0][0] == GUEST
+    assert "confirmed" in provider.sent[0][1]
+
+
+async def test_a_full_slot_cannot_be_booked_and_the_reason_reaches_the_model(
+    client: AsyncClient, menu, owner_headers, use_llm
+) -> None:
+    day = day_ahead()
+    await client.post(
+        "/api/bookings", headers=owner_headers,
+        json={"guest_name": "Neha", "phone": OTHER, "party_size": 4, "booking_date": day, "start_time": "11:00"},
+    )
+    llm = use_llm(ScriptedLLM(tool_call("create_booking_request", guest_name="Asha", party_size=2, date=day, time="11:00"), say("Sorry")))
+
+    await ask(client, owner_headers, "book", phone=GUEST)
+
+    assert "No table is free" in llm.last_tool_result["error"]
+
+
+@pytest.mark.parametrize(
+    ("args", "fragment"),
+    [
+        ({"guest_name": "", "party_size": 2, "date": "DAY", "time": "11:00"}, "name"),
+        ({"guest_name": "Neha", "party_size": 0, "date": "DAY", "time": "11:00"}, "party_size"),
+        ({"guest_name": "Neha", "party_size": 2, "date": "soon", "time": "11:00"}, "YYYY-MM-DD"),
+        ({"guest_name": "Neha", "party_size": 2, "date": "DAY", "time": "noon"}, "HH:MM"),
+        ({"guest_name": "Neha", "party_size": 2, "date": "DAY", "time": "11:20"}, "not a bookable slot"),
+        ({"guest_name": "Neha", "party_size": 2, "date": "2020-01-01", "time": "11:00"}, "Bookings open"),
+        ({"guest_name": "Neha", "party_size": 99, "date": "DAY", "time": "11:00"}, "party_size"),
+    ],
+)
+async def test_invalid_booking_requests_get_a_clear_error(
+    client: AsyncClient, menu, owner_headers, use_llm, args, fragment
+) -> None:
+    args = {**args, "date": day_ahead() if args["date"] == "DAY" else args["date"]}
+    llm = use_llm(ScriptedLLM(tool_call("create_booking_request", **args), say("ok")))
+
+    await ask(client, owner_headers, "book")
+
+    assert fragment in llm.last_tool_result["error"]
+    assert (await client.get("/api/bookings", headers=owner_headers)).json() == []  # nothing was saved
+
+
+async def test_a_guest_cannot_hold_more_than_three_upcoming_bookings(
+    app, client: AsyncClient, menu, owner_headers
+) -> None:
+    results = []
+    for index in range(4):
+        llm = ScriptedLLM(
+            tool_call("create_booking_request", guest_name="Neha", party_size=2, date=day_ahead(index + 1), time="11:00"),
+            say("ok"),
+        )
+        app.dependency_overrides[get_optional_llm] = _returns(llm)
+        await ask(client, owner_headers, "book", phone=GUEST)
+        results.append(llm.last_tool_result)
+
+    assert ["error" in r for r in results] == [False, False, False, True]
+    assert "3 upcoming bookings" in results[3]["error"]
+
+
+async def test_a_guest_sees_only_their_own_bookings(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+    day = day_ahead()
+    for phone, time_ in ((GUEST, "11:00"), (OTHER, "14:00")):
+        await client.post(
+            "/api/bookings", headers=owner_headers,
+            json={"guest_name": "G", "phone": phone, "party_size": 2, "booking_date": day, "start_time": time_},
+        )
+    llm = use_llm(ScriptedLLM(tool_call("get_my_bookings"), say("Here")))
+
+    await ask(client, owner_headers, "my bookings?", phone=GUEST)
+
+    bookings = llm.last_tool_result["bookings"]
+    assert [(b["time"], b["status"]) for b in bookings] == [("11:00", "requested")]
+
+
+async def test_cancelled_and_past_bookings_are_not_listed(client: AsyncClient, menu, owner_headers, use_llm) -> None:
+    day = day_ahead()
+    booking = (await client.post(
+        "/api/bookings", headers=owner_headers,
+        json={"guest_name": "G", "phone": GUEST, "party_size": 2, "booking_date": day, "start_time": "11:00"},
+    )).json()
+    await client.post(f"/api/bookings/{booking['id']}/status", headers=owner_headers, json={"status": "cancelled"})
+    llm = use_llm(ScriptedLLM(tool_call("get_my_bookings"), say("none")))
+
+    await ask(client, owner_headers, "my bookings?", phone=GUEST)
+
+    assert llm.last_tool_result["bookings"] == []
+    assert "No upcoming bookings" in llm.last_tool_result["note"]
+
+
+async def test_handoff_includes_the_owner_contact_when_configured(
+    client: AsyncClient, owner_headers, use_llm, monkeypatch
+) -> None:
+    monkeypatch.setenv("OWNER_CONTACT", "98100 11111")
+    get_settings.cache_clear()
+    llm = use_llm(ScriptedLLM(tool_call("request_human_handoff", reason="complaint"), say("ok")))
+
+    await ask(client, owner_headers, "this is bad")
+
+    assert llm.last_tool_result["contact_for_urgent_help"] == "98100 11111"
+
+
+async def test_system_prompt_names_the_restaurant_and_todays_date(
+    client: AsyncClient, owner_headers, use_llm, daytime
+) -> None:
+    llm = use_llm(ScriptedLLM(say("hi")))
+
+    await ask(client, owner_headers, "hi")
+
+    system = llm.requests[0]["messages"][0]["content"]
+    assert "Spice Garden" in system  # the name given at registration
+    assert "Monday, 02 November 2026" in system
+    assert "never tell the guest it is confirmed" in system.lower()
+
+
+async def test_replies_to_a_campaign_are_answered_and_still_counted_by_retention(
+    client: AsyncClient, menu, owner_headers, use_llm, provider, webhook_secret, engine
+) -> None:
+    """The bot answers a guest's reply, and the retention report still counts that reply."""
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from restaurant_management_system.billing.models import Bill
+
+    old = await place_order(client, owner_headers, menu, {"paneer": 1}, phone=GUEST, name="Asha")
+    async with async_sessionmaker(engine)() as session:
+        await session.execute(
+            update(Bill).where(Bill.id == old["id"]).values(created_at=datetime.now(UTC) - timedelta(days=100))
+        )
+        await session.commit()
+    rule = (await client.post(
+        "/api/retention/rules", headers=owner_headers,
+        json={"name": "Win back", "segment": "lost", "template": "We miss you, {name}!", "mode": "automatic", "cooldown_days": 30},
+    )).json()
+    assert rule["segment"] == "lost"
+    await client.post("/api/retention/run", headers=owner_headers)
+    use_llm(ScriptedLLM(say("Great to hear from you!")))
+
+    await client.post(INBOUND, json={"phone": GUEST, "text": "Table for 2?"}, headers={"X-Webhook-Secret": webhook_secret})
+
+    report = (await client.get("/api/retention/report", headers=owner_headers)).json()
+    assert report[0]["replied"] == 1
+    assert provider.sent[-1] == (GUEST, "Great to hear from you!")
+    assert report[0]["sent"] == 1

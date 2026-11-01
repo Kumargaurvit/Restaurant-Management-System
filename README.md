@@ -9,7 +9,7 @@ Planning documents are in [`plans/`](plans/01-discussion-and-plan.md).
 ## Features
 
 ### Billing
-- Restaurant profile (name, address, phone, GSTIN, FSSAI, footer) printed on every receipt
+- Restaurant name (set at registration, owner can rename) plus receipt details (address, phone, GSTIN, FSSAI, footer) printed on every receipt
 - Menu management: add, edit, move, delete and mark unavailable (categories, items, GST rate per item), and edit or deactivate tables
 - Tables for dine-in, plus takeaway and delivery orders
 - KOT (kitchen order tickets)
@@ -25,10 +25,13 @@ Planning documents are in [`plans/`](plans/01-discussion-and-plan.md).
 
 ### WhatsApp chatbot
 - Answers guest questions about current offers, using only the offers the owner has set up (it never invents a discount)
-- Says whether a table is free **right now** for a party size
+- Says whether there is room **right now**, or which booking slots are free on a given day (using the Bookings opening hours and existing reservations)
+- **Requests a table booking** for the guest. It starts as *requested*; when staff confirm it in Bookings, the guest gets a WhatsApp message
+- Shows a guest their own upcoming bookings
 - Shows a guest their own recent bills and sends a receipt (only ever the bills for the guest's own number)
 - Replies in the guest's language (multilingual through `gpt-4.1-mini` with tool calling)
-- Does **not** take food orders or table reservations; it hands those to a person
+- Does **not** take food orders, and cannot change or cancel a booking; it hands those to a person
+- A guest can hold at most 3 upcoming bookings through the bot; more needs a person
 - Hands the chat to a person when it cannot answer or the guest is upset; these show in a "needs a person" queue
 - Owner screens: **Offers**, **Conversations**, and a **Test chat** to try the bot without WhatsApp
 
@@ -39,7 +42,7 @@ Planning documents are in [`plans/`](plans/01-discussion-and-plan.md).
 
 ### Customer retention
 - RFM scoring (recency, frequency, monetary value) from billing data
-- Segments: new, regular, at-risk, lost, VIP (thresholds set by the owner)
+- Segments: new, regular, at-risk, lost (thresholds set by the owner)
 - Campaign rules: segment, trigger, message template, and mode
 - Each rule is **automatic** or **needs approval**
 - Approval queue for pending messages
@@ -227,18 +230,23 @@ Percentage offers also appear as **Apply ...** buttons next to the discount box 
 **WhatsApp Bot → Conversations** lists every guest chat, with the ones that need a person first. Open one to read the thread and why the bot handed it over, then **Mark as handled**. Replying from the app is not built yet: reply to the guest on WhatsApp.
 
 ### Connecting real WhatsApp (later)
-The WhatsApp provider is not chosen yet. Messaging sits behind an interface (`messaging/base.py`), and today only a console provider that logs messages exists. Inbound messages arrive at:
+The WhatsApp provider is not chosen yet. All outbound messages (bot replies, booking confirmations and reminders, retention campaigns) go through one interface, `messaging/provider.py`, and today only a `log` provider that records messages exists. There is **one inbound entry point**:
 
 ```
-POST /api/chat/webhook
-X-Webhook-Secret: <WEBHOOK_SECRET>
+POST /api/messaging/inbound
+X-Webhook-Secret: <WHATSAPP_WEBHOOK_SECRET>
 {"phone": "9810000001", "text": "is there space for 2?"}
 ```
 
-The webhook is **disabled** until `WEBHOOK_SECRET` is set in `.env`. The reply is returned in the response and sent through the provider. Adapting a provider's own payload format to this one is a small piece of glue code.
+It is **disabled** (401) until `WHATSAPP_WEBHOOK_SECRET` is set in `.env`. For every message it:
+1. logs it in the `messages` table (the retention report counts guest replies to campaigns from this log),
+2. handles `STOP` / `START` as a marketing opt-out / opt-in, without involving the bot,
+3. otherwise sends it to the chatbot and sends the reply back through the provider (also logged).
+
+Adapting a provider's own payload format to this one is a small piece of glue code. `OWNER_CONTACT` (optional) is shown to guests when the bot hands a chat to a person.
 
 ### What the bot can use
-`get_active_offers`, `check_table_availability`, `get_my_recent_bills`, `get_bill_receipt`, `request_human_handoff`. Every tool is scoped to the guest's own phone number taken from the webhook, never from the model, so a guest cannot read another guest's data.
+`get_active_offers`, `check_table_availability`, `create_booking_request`, `get_my_bookings`, `get_my_recent_bills`, `get_bill_receipt`, `request_human_handoff`. Every tool is scoped to the guest's own phone number taken from the webhook, never from the model, so a guest cannot read another guest's data.
 
 ---
 
@@ -277,8 +285,10 @@ All configuration is read from `.env` through the `Settings` class in `src/resta
 | `BCRYPT_ROUNDS` | `12` | Password hashing cost (tests use a low value) |
 | `OPENAI_API_KEY` | empty | Key for the chatbot. Empty means the bot only sends the fallback reply |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Chatbot model |
-| `WEBHOOK_SECRET` | empty | Shared secret for `POST /api/chat/webhook`. Empty disables the webhook |
-| `MESSAGING_PROVIDER` | `console` | Outbound WhatsApp provider (only `console` exists) |
+| `WHATSAPP_PROVIDER` | `log` | Outbound WhatsApp provider (only `log` exists) |
+| `WHATSAPP_WEBHOOK_SECRET` | empty | Shared secret for `POST /api/messaging/inbound`. Empty disables it |
+| `OWNER_CONTACT` | empty | Shown to guests when the bot hands a chat to a person |
+| `SCHEDULER_ENABLED` | `true` | Run booking reminders and automatic retention campaigns |
 | `CHAT_HISTORY_MESSAGES` | `12` | Recent messages sent to the model for context |
 | `CHAT_MAX_TOOL_ROUNDS` | `4` | Most tool-calling rounds per guest message |
 | `CORS_ORIGINS` | `["http://localhost:5173"]` | Frontend origins allowed to call the API |
@@ -326,9 +336,9 @@ curl -I http://localhost:5173/
 |---|---|---|
 | 0 | Project setup, Docker, config, health endpoint | Done |
 | 1 | Billing: menu, tables, orders, KOT, bills, payments, printing | Done (see notes below) |
-| 2 | WhatsApp chatbot: offers, bills, availability (tool calling) | Done, except a real WhatsApp provider (see notes below) |
-| 3 | Dine-out booking | Planned |
-| 4 | Customer retention: RFM, campaigns, approval queue | Planned |
+| 2 | WhatsApp chatbot: offers, bills, availability and bookings (tool calling) | Done, except a real WhatsApp provider |
+| 3 | Dine-out booking | Done |
+| 4 | Customer retention: RFM, campaigns, approval queue | Done |
 
 Full plan and decisions: [`plans/01-discussion-and-plan.md`](plans/01-discussion-and-plan.md).
 
@@ -339,6 +349,6 @@ Full plan and decisions: [`plans/01-discussion-and-plan.md`](plans/01-discussion
 - Customer orders through WhatsApp
 - Cities other than Delhi
 - Choosing a WhatsApp provider (deferred). The bot works through the test chat and the webhook only.
-- Table reservations and food orders through the bot (reservations arrive in Stage 3)
+- Food orders through the bot, and changing or cancelling a booking through the bot
 - Inventory and payment gateway integration
 - Cloud hosting (local Docker only)

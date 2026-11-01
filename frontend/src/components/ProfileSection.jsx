@@ -1,18 +1,27 @@
 import { useEffect, useState } from "react";
 import { request } from "../api.js";
 
-const EMPTY = { name: "", address: "", phone: "", gstin: "", fssai: "", receipt_footer: "" };
+const EMPTY = { address: "", phone: "", gstin: "", fssai: "", receipt_footer: "" };
 
+// The restaurant name has its own card (owner only). These details print under it on receipts.
 export default function ProfileSection() {
-  const [profile, setProfile] = useState(null);
+  const [details, setDetails] = useState(null);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    request("/api/restaurant", { signal: controller.signal })
-      .then((loaded) => setProfile({ ...EMPTY, ...loaded }))
+    request("/api/restaurant/profile", { signal: controller.signal })
+      .then((loaded) =>
+        setDetails({
+          address: loaded.address ?? "",
+          phone: loaded.phone ?? "",
+          gstin: loaded.gstin ?? "",
+          fssai: loaded.fssai ?? "",
+          receipt_footer: loaded.receipt_footer ?? "",
+        }),
+      )
       .catch((err) => {
         if (err.name !== "AbortError") setError(err.message);
       });
@@ -21,7 +30,7 @@ export default function ProfileSection() {
 
   const change = (field) => (event) => {
     setMessage(null);
-    setProfile({ ...profile, [field]: event.target.value });
+    setDetails({ ...details, [field]: event.target.value });
   };
 
   async function save(event) {
@@ -30,7 +39,11 @@ export default function ProfileSection() {
     setError(null);
     setMessage(null);
     try {
-      setProfile(await request("/api/restaurant", { method: "PUT", body: profile }));
+      const saved = await request("/api/restaurant/profile", {
+        method: "PUT",
+        body: { ...EMPTY, ...details },
+      });
+      setDetails({ ...EMPTY, ...saved });
       setMessage("Saved. New receipts will use these details.");
     } catch (err) {
       setError(err.message);
@@ -39,7 +52,7 @@ export default function ProfileSection() {
     }
   }
 
-  if (!profile) {
+  if (!details) {
     return error ? (
       <p className="error" role="alert">
         {error}
@@ -50,33 +63,29 @@ export default function ProfileSection() {
   }
 
   return (
-    <form className="card stack" onSubmit={save} aria-label="Restaurant profile">
-      <h2>Restaurant profile</h2>
-      <p className="muted">Printed at the top of every receipt.</p>
-      <label>
-        Restaurant name
-        <input value={profile.name} onChange={change("name")} />
-      </label>
+    <form className="card stack" onSubmit={save} aria-label="Receipt details">
+      <h2>Receipt details</h2>
+      <p className="muted">Printed under the restaurant name on every bill.</p>
       <label>
         Address
-        <input value={profile.address} onChange={change("address")} />
+        <input value={details.address} onChange={change("address")} />
       </label>
       <label>
         Phone
-        <input value={profile.phone} onChange={change("phone")} />
+        <input value={details.phone} onChange={change("phone")} />
       </label>
       <label>
         GSTIN
-        <input value={profile.gstin} onChange={change("gstin")} placeholder="07AAAAA0000A1Z5" />
+        <input value={details.gstin} onChange={change("gstin")} placeholder="07AAAAA0000A1Z5" />
       </label>
       <label>
         FSSAI licence number
-        <input value={profile.fssai} onChange={change("fssai")} placeholder="14 digits" />
+        <input value={details.fssai} onChange={change("fssai")} placeholder="14 digits" />
       </label>
       <label>
         Receipt footer
         <input
-          value={profile.receipt_footer}
+          value={details.receipt_footer}
           onChange={change("receipt_footer")}
           placeholder="Thank you! Visit again."
         />
@@ -89,7 +98,7 @@ export default function ProfileSection() {
       {message && <p role="status">{message}</p>}
       <div>
         <button className="button" type="submit" disabled={busy}>
-          Save profile
+          Save receipt details
         </button>
       </div>
     </form>

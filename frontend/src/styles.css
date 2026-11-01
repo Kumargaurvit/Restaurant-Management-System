@@ -276,6 +276,7 @@ label {
 }
 
 input,
+textarea,
 select {
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--border);
@@ -287,6 +288,7 @@ select {
 }
 
 input:focus-visible,
+textarea:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -747,4 +749,45 @@ select:focus-visible {
 .grow {
   flex: 1;
   min-width: 12rem;
+
+/* ---------- bookings and retention ---------- */
+
+textarea {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.booking p {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.badge-requested,
+.badge-seated {
+  background: var(--checking-soft);
+  color: var(--text);
+}
+
+.badge-confirmed,
+.badge-completed {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-cancelled,
+.badge-no_show {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.message-body {
+  white-space: pre-wrap;
 }

@@ -24,9 +24,16 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
 
-    # Inbound chat webhook is disabled until this secret is set.
-    webhook_secret: str = ""
-    messaging_provider: str = "console"
+    # Messaging. "log" records outbound messages without sending; a real WhatsApp provider
+    # plugs in behind messaging.provider.MessageProvider.
+    whatsapp_provider: str = "log"
+    whatsapp_webhook_secret: str = ""
+    owner_contact: str = ""
+
+    # Background jobs (booking reminders, automatic retention campaigns).
+    scheduler_enabled: bool = True
+
+    # WhatsApp chatbot: how much history the model sees and how many tool rounds it may use.
     chat_history_messages: int = 12
     chat_max_tool_rounds: int = 4
 

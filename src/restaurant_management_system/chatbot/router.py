@@ -1,8 +1,6 @@
-import logging
-import secrets
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,10 +13,6 @@ from restaurant_management_system.chatbot.service import handle_guest_message
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.customers.models import Customer
 from restaurant_management_system.db.session import get_session
-from restaurant_management_system.messaging.base import MessageProvider
-from restaurant_management_system.messaging.factory import get_provider
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chatbot"])
 
@@ -57,29 +51,6 @@ class ConversationOut(BaseModel):
 
 class ConversationDetailOut(ConversationOut):
     messages: list[MessageOut]
-
-
-@router.post("/webhook", response_model=ReplyOut)
-async def webhook(
-    body: InboundMessage,
-    x_webhook_secret: str | None = Header(default=None),
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-    llm: LLMClient | None = Depends(get_optional_llm),
-    provider: MessageProvider = Depends(get_provider),
-) -> ReplyOut:
-    """Inbound guest message from the messaging provider. The reply is also sent to the guest."""
-    if not settings.webhook_secret:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Chat webhook is not enabled")
-    if not x_webhook_secret or not secrets.compare_digest(x_webhook_secret, settings.webhook_secret):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid webhook secret")
-
-    result = await handle_guest_message(session, llm, settings, body.phone, body.text)
-    try:
-        await provider.send_text(result.conversation.phone, result.reply)
-    except Exception:  # the reply is stored either way; a person can resend it
-        logger.exception("Could not send WhatsApp reply to %s", result.conversation.phone)
-    return ReplyOut(reply=result.reply, needs_human=result.needs_human)
 
 
 @router.post(

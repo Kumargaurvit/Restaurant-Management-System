@@ -12,6 +12,7 @@ from restaurant_management_system.auth.security import (
 )
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.db.session import get_session
+from restaurant_management_system.restaurant.services import get_restaurant_name, set_restaurant_name
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -20,6 +21,10 @@ class SetupRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=128)
+
+
+class BootstrapRequest(SetupRequest):
+    restaurant_name: str = Field(min_length=1, max_length=160, pattern=r"\S")
 
 
 class LoginRequest(BaseModel):
@@ -37,6 +42,7 @@ class UserOut(BaseModel):
     email: str
     role: str
     is_active: bool = True
+    restaurant_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -61,6 +67,12 @@ class StatusOut(BaseModel):
     has_users: bool
 
 
+async def _user_out(session: AsyncSession, user: User) -> UserOut:
+    out = UserOut.model_validate(user)
+    out.restaurant_name = await get_restaurant_name(session)
+    return out
+
+
 async def _user_count(session: AsyncSession) -> int:
     return await session.scalar(select(func.count()).select_from(User)) or 0
 
@@ -72,7 +84,7 @@ async def auth_status(session: AsyncSession = Depends(get_session)) -> StatusOut
 
 @router.post("/bootstrap", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 async def bootstrap_owner(
-    body: SetupRequest,
+    body: BootstrapRequest,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> TokenOut:
@@ -87,9 +99,10 @@ async def bootstrap_owner(
         role=Role.OWNER.value,
     )
     session.add(user)
+    await set_restaurant_name(session, body.restaurant_name)
     await session.commit()
     token = create_access_token(user.id, user.role, settings)
-    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+    return TokenOut(access_token=token, user=await _user_out(session, user))
 
 
 @router.post("/login", response_model=TokenOut)
@@ -108,12 +121,14 @@ async def login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
     token = create_access_token(user.id, user.role, settings)
-    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+    return TokenOut(access_token=token, user=await _user_out(session, user))
 
 
 @router.get("/me", response_model=UserOut)
-async def me(user: User = Depends(get_current_user)) -> User:
-    return user
+async def me(
+    user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)
+) -> UserOut:
+    return await _user_out(session, user)
 
 
 @router.post(

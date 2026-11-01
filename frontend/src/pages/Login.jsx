@@ -5,6 +5,8 @@ import { useAuth } from "../auth.jsx";
 export default function Login() {
   const { login, setup } = useAuth();
   const [hasUsers, setHasUsers] = useState(null);
+  const [mode, setMode] = useState(null); // "login" or "register"; chosen once we know if an owner exists
+  const [restaurantName, setRestaurantName] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,7 +16,10 @@ export default function Login() {
   useEffect(() => {
     const controller = new AbortController();
     request("/api/auth/status", { signal: controller.signal })
-      .then((body) => setHasUsers(body.has_users))
+      .then((body) => {
+        setHasUsers(body.has_users);
+        setMode(body.has_users ? "login" : "register");
+      })
       .catch((err) => {
         if (err.name !== "AbortError") setError("Cannot reach the server. Is the backend running?");
       });
@@ -26,32 +31,56 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      if (hasUsers) {
+      if (mode === "login") {
         await login(email, password);
       } else {
-        await setup(name, email, password);
+        await setup(name, email, password, restaurantName.trim());
       }
     } catch (err) {
-      setError(err.message);
+      setError(
+        err.status === 409 && mode === "register"
+          ? "An owner account already exists. Ask the owner to add you as staff, then sign in."
+          : err.message,
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  const isSetup = hasUsers === false;
+  const isSetup = mode === "register";
+
+  function switchTo(next) {
+    setMode(next);
+    setError(null);
+  }
 
   return (
     <main className="auth-page">
       <form className="card auth-card" onSubmit={submit}>
-        <h1>{isSetup ? "Set up your restaurant" : "Sign in"}</h1>
+        <h1>{isSetup ? (hasUsers ? "Register" : "Set up your restaurant") : "Sign in"}</h1>
         {isSetup && (
-          <p className="muted">Create the owner account. You can add staff afterwards.</p>
+          <p className="muted">
+            {hasUsers
+              ? "Only the first owner can register. Staff accounts are added by the owner."
+              : "Create the owner account. You can add staff afterwards."}
+          </p>
         )}
 
         {isSetup && (
           <label>
+            Restaurant name
+            <input
+              value={restaurantName}
+              onChange={(e) => setRestaurantName(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
+        )}
+        {isSetup && (
+          <label>
             Your name
-            <input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
         )}
         <label>
@@ -80,9 +109,18 @@ export default function Login() {
             {error}
           </p>
         )}
-        <button className="button" type="submit" disabled={busy || hasUsers === null}>
+        <button className="button" type="submit" disabled={busy || mode === null}>
           {busy ? "Please wait..." : isSetup ? "Create owner account" : "Sign in"}
         </button>
+        {mode !== null && (
+          <button
+            className="link-button"
+            type="button"
+            onClick={() => switchTo(isSetup ? "login" : "register")}
+          >
+            {isSetup ? "Already have an account? Sign in" : "New restaurant? Register"}
+          </button>
+        )}
       </form>
     </main>
   );

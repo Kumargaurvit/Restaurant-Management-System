@@ -26,7 +26,7 @@ from restaurant_management_system.billing.receipt import render_kot, render_rece
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.customers.services import get_or_create_customer
 from restaurant_management_system.db.session import get_session
-from restaurant_management_system.restaurant.services import get_profile
+from restaurant_management_system.restaurant.services import get_profile_or_blank
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -529,7 +529,7 @@ async def print_receipt(
     settings: Settings = Depends(get_settings),
 ) -> Response:
     bill = await services.get_bill(session, bill_id)
-    profile = await get_profile(session)
+    profile = await get_profile_or_blank(session)
     text = render_receipt(bill, bill.order, ZoneInfo(settings.timezone), profile)
     return Response(text, media_type="text/plain; charset=utf-8")
 

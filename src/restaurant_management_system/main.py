@@ -6,18 +6,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from restaurant_management_system.auth.router import router as auth_router
 from restaurant_management_system.billing.router import router as billing_router
+from restaurant_management_system.booking.router import router as booking_router
 from restaurant_management_system.chatbot.offers_router import router as offers_router
 from restaurant_management_system.chatbot.router import router as chat_router
 from restaurant_management_system.config import get_settings
 from restaurant_management_system.customers.router import reports_router
 from restaurant_management_system.customers.router import router as customers_router
 from restaurant_management_system.db.session import get_engine
+from restaurant_management_system.messaging.router import router as messaging_router
 from restaurant_management_system.restaurant.router import router as restaurant_router
+from restaurant_management_system.retention.router import router as retention_router
+from restaurant_management_system.scheduler import build_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    scheduler = build_scheduler() if get_settings().scheduler_enabled else None
+    if scheduler:
+        scheduler.start()
     yield
+    if scheduler:
+        scheduler.shutdown(wait=False)
     await get_engine().dispose()
 
 
@@ -37,6 +46,9 @@ def create_app() -> FastAPI:
     app.include_router(billing_router)
     app.include_router(customers_router)
     app.include_router(reports_router)
+    app.include_router(booking_router)
+    app.include_router(retention_router)
+    app.include_router(messaging_router)
     app.include_router(restaurant_router)
     app.include_router(offers_router)
     app.include_router(chat_router)

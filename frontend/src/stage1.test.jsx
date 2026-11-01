@@ -9,17 +9,18 @@ const PROFILE = {
   name: "Spice Route", address: "12 CP, Delhi", phone: "011 4000 1234",
   gstin: "07AAAAA0000A1Z5", fssai: "12345678901234", receipt_footer: "Thanks!",
 };
+const DETAILS_URL = "/api/restaurant/profile";
 const STAFF = [
   { id: 1, name: "Asha", email: "asha@test.com", role: "owner", is_active: true },
   { id: 2, name: "Ravi", email: "ravi@test.com", role: "waiter", is_active: true },
   { id: 3, name: "Old Hand", email: "old@test.com", role: "cashier", is_active: false },
 ];
 
-describe("Restaurant profile", () => {
+describe("Receipt details", () => {
   async function openSettings(user, routes = {}) {
     const api = mockApi({
       ...baseRoutes(user),
-      "GET /api/restaurant": PROFILE,
+      [`GET ${DETAILS_URL}`]: PROFILE,
       "GET /api/auth/users": STAFF,
       ...routes,
     });
@@ -27,51 +28,64 @@ describe("Restaurant profile", () => {
     return api;
   }
 
-  it("loads the saved profile into the form", async () => {
+  it("loads the saved details into the form", async () => {
     await openSettings(OWNER);
 
-    const form = await screen.findByRole("form", { name: "Restaurant profile" });
-    expect(within(form).getByLabelText("Restaurant name")).toHaveValue("Spice Route");
+    const form = await screen.findByRole("form", { name: "Receipt details" });
+    expect(within(form).getByLabelText("Address")).toHaveValue("12 CP, Delhi");
     expect(within(form).getByLabelText("GSTIN")).toHaveValue("07AAAAA0000A1Z5");
     expect(within(form).getByLabelText("FSSAI licence number")).toHaveValue("12345678901234");
   });
 
-  it("saves changes and confirms", async () => {
-    const api = await openSettings(OWNER, { "PUT /api/restaurant": ({ body }) => body });
-    const name = await screen.findByLabelText("Restaurant name");
+  it("does not include the restaurant name, which has its own card", async () => {
+    await openSettings(OWNER);
 
-    await userEvent.clear(name);
-    await userEvent.type(name, "Spice Route 2");
-    await userEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    const form = await screen.findByRole("form", { name: "Receipt details" });
+    expect(within(form).queryByLabelText("Restaurant name")).not.toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Restaurant name" })).toBeInTheDocument();
+  });
+
+  it("saves changes and confirms", async () => {
+    const api = await openSettings(OWNER, { [`PUT ${DETAILS_URL}`]: ({ body }) => body });
+    const address = await screen.findByLabelText("Address");
+
+    await userEvent.clear(address);
+    await userEvent.type(address, "7 Khan Market, Delhi");
+    await userEvent.click(screen.getByRole("button", { name: "Save receipt details" }));
 
     expect(await screen.findByText(/Saved\. New receipts will use these details/)).toBeInTheDocument();
-    expect(api.called("PUT", "/api/restaurant")[0].body).toMatchObject({
-      name: "Spice Route 2",
+    expect(api.called("PUT", DETAILS_URL)[0].body).toEqual({
+      address: "7 Khan Market, Delhi",
+      phone: "011 4000 1234",
       gstin: "07AAAAA0000A1Z5",
+      fssai: "12345678901234",
+      receipt_footer: "Thanks!",
     });
   });
 
   it("shows the server's message for an invalid GSTIN", async () => {
     await openSettings(OWNER, {
-      "PUT /api/restaurant": fail(422, "Value error, GSTIN must be 15 characters, like 07AAAAA0000A1Z5"),
+      [`PUT ${DETAILS_URL}`]: fail(422, "Value error, GSTIN must be 15 characters, like 07AAAAA0000A1Z5"),
     });
     await screen.findByLabelText("GSTIN");
 
-    await userEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save receipt details" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("GSTIN must be 15 characters");
   });
 
-  it("is available to a manager but not a cashier", async () => {
+  it("is available to a manager, who cannot rename the restaurant", async () => {
     await openSettings(MANAGER);
-    expect(await screen.findByRole("form", { name: "Restaurant profile" })).toBeInTheDocument();
+
+    expect(await screen.findByRole("form", { name: "Receipt details" })).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Restaurant name" })).not.toBeInTheDocument();
   });
 
   it("is hidden from a cashier", async () => {
     await openSettings(CASHIER);
     await screen.findByRole("heading", { name: "Settings" });
 
-    expect(screen.queryByRole("form", { name: "Restaurant profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Receipt details" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Staff" })).not.toBeInTheDocument();
   });
 });
@@ -80,7 +94,7 @@ describe("Staff management", () => {
   async function openStaff(routes = {}) {
     const api = mockApi({
       ...baseRoutes(OWNER),
-      "GET /api/restaurant": PROFILE,
+      [`GET ${DETAILS_URL}`]: PROFILE,
       "GET /api/auth/users": STAFF,
       ...routes,
     });
@@ -90,9 +104,9 @@ describe("Staff management", () => {
   }
 
   it("is only shown to the owner", async () => {
-    mockApi({ ...baseRoutes(MANAGER), "GET /api/restaurant": PROFILE });
+    mockApi({ ...baseRoutes(MANAGER), [`GET ${DETAILS_URL}`]: PROFILE });
     renderApp("/settings", { user: MANAGER });
-    await screen.findByRole("form", { name: "Restaurant profile" });
+    await screen.findByRole("form", { name: "Receipt details" });
 
     expect(screen.queryByRole("region", { name: "Staff" })).not.toBeInTheDocument();
   });

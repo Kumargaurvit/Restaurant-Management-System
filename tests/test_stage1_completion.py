@@ -2,8 +2,10 @@ import pytest
 from httpx import AsyncClient
 
 API = "/api/billing"
+PROFILE_URL = "/api/restaurant/profile"
+# The restaurant name is set at registration (see conftest, "Spice Garden") and has its own
+# endpoint. These are the extra details printed on receipts.
 PROFILE = {
-    "name": "Spice Route",
     "address": "12 Connaught Place, New Delhi 110001",
     "phone": "011 4000 1234",
     "gstin": "07AAAAA0000A1Z5",
@@ -25,92 +27,118 @@ async def bill_one_order(client: AsyncClient, headers, menu) -> dict:
 # ------------------------------------------------------ restaurant profile
 
 
-async def test_profile_is_empty_before_it_is_saved(client: AsyncClient, owner_headers) -> None:
-    response = await client.get("/api/restaurant", headers=owner_headers)
+async def test_details_are_blank_until_saved_but_the_name_is_there(client: AsyncClient, owner_headers) -> None:
+    response = await client.get(PROFILE_URL, headers=owner_headers)
 
     assert response.status_code == 200
-    assert response.json()["name"] == ""
+    assert response.json() == {
+        "name": "Spice Garden",
+        "address": "",
+        "phone": "",
+        "gstin": "",
+        "fssai": "",
+        "receipt_footer": "",
+    }
 
 
-async def test_owner_can_save_and_read_the_profile(client: AsyncClient, owner_headers) -> None:
-    saved = await client.put("/api/restaurant", headers=owner_headers, json=PROFILE)
-    read = await client.get("/api/restaurant", headers=owner_headers)
+async def test_owner_can_save_and_read_the_details(client: AsyncClient, owner_headers) -> None:
+    saved = await client.put(PROFILE_URL, headers=owner_headers, json=PROFILE)
+    read = await client.get(PROFILE_URL, headers=owner_headers)
 
     assert saved.status_code == 200
-    assert read.json() == PROFILE
+    assert read.json() == {"name": "Spice Garden", **PROFILE}
 
 
-async def test_saving_again_updates_the_same_profile(client: AsyncClient, owner_headers) -> None:
-    await client.put("/api/restaurant", headers=owner_headers, json=PROFILE)
-    await client.put("/api/restaurant", headers=owner_headers, json={**PROFILE, "name": "New Name"})
+async def test_saving_details_does_not_change_the_restaurant_name(client: AsyncClient, owner_headers) -> None:
+    await client.put(PROFILE_URL, headers=owner_headers, json=PROFILE)
 
-    assert (await client.get("/api/restaurant", headers=owner_headers)).json()["name"] == "New Name"
+    assert (await client.get("/api/restaurant", headers=owner_headers)).json() == {"name": "Spice Garden"}
+
+
+async def test_renaming_does_not_wipe_the_saved_details(client: AsyncClient, owner_headers) -> None:
+    await client.put(PROFILE_URL, headers=owner_headers, json=PROFILE)
+
+    await client.put("/api/restaurant", headers=owner_headers, json={"name": "Dilli Darbar"})
+
+    read = (await client.get(PROFILE_URL, headers=owner_headers)).json()
+    assert read["name"] == "Dilli Darbar"
+    assert read["gstin"] == PROFILE["gstin"]
+
+
+async def test_saving_again_updates_the_same_details(client: AsyncClient, owner_headers) -> None:
+    await client.put(PROFILE_URL, headers=owner_headers, json=PROFILE)
+    await client.put(PROFILE_URL, headers=owner_headers, json={**PROFILE, "address": "New address"})
+
+    assert (await client.get(PROFILE_URL, headers=owner_headers)).json()["address"] == "New address"
 
 
 @pytest.mark.parametrize("gstin", ["123", "07aaaaa0000a1z5x", "AAAAAAAAAAAAAAA"])
 async def test_invalid_gstin_is_rejected(client: AsyncClient, owner_headers, gstin) -> None:
-    response = await client.put("/api/restaurant", headers=owner_headers, json={**PROFILE, "gstin": gstin})
+    response = await client.put(PROFILE_URL, headers=owner_headers, json={**PROFILE, "gstin": gstin})
 
     assert response.status_code == 422
 
 
 async def test_lowercase_gstin_is_normalised(client: AsyncClient, owner_headers) -> None:
     response = await client.put(
-        "/api/restaurant", headers=owner_headers, json={**PROFILE, "gstin": "07aaaaa0000a1z5"}
+        PROFILE_URL, headers=owner_headers, json={**PROFILE, "gstin": "07aaaaa0000a1z5"}
     )
 
     assert response.json()["gstin"] == "07AAAAA0000A1Z5"
 
 
 async def test_invalid_fssai_is_rejected(client: AsyncClient, owner_headers) -> None:
-    response = await client.put("/api/restaurant", headers=owner_headers, json={**PROFILE, "fssai": "12345"})
+    response = await client.put(PROFILE_URL, headers=owner_headers, json={**PROFILE, "fssai": "12345"})
 
     assert response.status_code == 422
 
 
-async def test_profile_can_be_cleared_of_optional_fields(client: AsyncClient, owner_headers) -> None:
-    response = await client.put(
-        "/api/restaurant", headers=owner_headers, json={**PROFILE, "gstin": "", "fssai": ""}
-    )
+async def test_optional_details_can_be_cleared(client: AsyncClient, owner_headers) -> None:
+    response = await client.put(PROFILE_URL, headers=owner_headers, json={**PROFILE, "gstin": "", "fssai": ""})
 
     assert response.status_code == 200
+    assert response.json()["gstin"] == ""
 
 
-async def test_staff_can_read_but_not_change_the_profile(client: AsyncClient, make_staff) -> None:
+async def test_manager_can_edit_details_but_waiter_cannot(client: AsyncClient, make_staff) -> None:
+    manager = await make_staff("manager")
     waiter = await make_staff("waiter")
 
-    assert (await client.get("/api/restaurant", headers=waiter)).status_code == 200
-    assert (await client.put("/api/restaurant", headers=waiter, json=PROFILE)).status_code == 403
+    assert (await client.put(PROFILE_URL, headers=manager, json=PROFILE)).status_code == 200
+    assert (await client.get(PROFILE_URL, headers=waiter)).status_code == 200
+    assert (await client.put(PROFILE_URL, headers=waiter, json=PROFILE)).status_code == 403
 
 
-async def test_profile_requires_login(client: AsyncClient) -> None:
-    assert (await client.get("/api/restaurant")).status_code == 401
+async def test_details_require_login(client: AsyncClient) -> None:
+    assert (await client.get(PROFILE_URL)).status_code == 401
+    assert (await client.put(PROFILE_URL, json=PROFILE)).status_code == 401
 
 
-async def test_receipt_shows_the_restaurant_details(client: AsyncClient, menu, owner_headers) -> None:
-    await client.put("/api/restaurant", headers=owner_headers, json=PROFILE)
+async def test_receipt_shows_the_name_and_all_saved_details(client: AsyncClient, menu, owner_headers) -> None:
+    await client.put(PROFILE_URL, headers=owner_headers, json=PROFILE)
     bill = await bill_one_order(client, owner_headers, menu)
 
     text = (await client.get(f"{API}/bills/{bill['id']}/receipt", headers=owner_headers)).text
 
-    assert "SPICE ROUTE" in text
+    assert "SPICE GARDEN" in text
     assert "Connaught Place" in text
     assert "GSTIN: 07AAAAA0000A1Z5" in text
     assert "FSSAI: 12345678901234" in text
     assert "Ph: 011 4000 1234" in text
     assert "Thank you for dining with us!" in text
-    assert text.index("SPICE ROUTE") < text.index("TAX INVOICE")
+    assert text.index("SPICE GARDEN") < text.index("TAX INVOICE")
     assert all(len(line) <= 42 for line in text.splitlines())
 
 
-async def test_receipt_without_a_profile_still_prints(client: AsyncClient, menu, owner_headers) -> None:
+async def test_name_only_receipt_is_compact(client: AsyncClient, menu, owner_headers) -> None:
     bill = await bill_one_order(client, owner_headers, menu)
 
-    text = (await client.get(f"{API}/bills/{bill['id']}/receipt", headers=owner_headers)).text
+    lines = (await client.get(f"{API}/bills/{bill['id']}/receipt", headers=owner_headers)).text.splitlines()
 
-    assert text.startswith("           TAX INVOICE") or "TAX INVOICE" in text.splitlines()[0]
-    assert "Thank you! Visit again." in text
-    assert "GSTIN" not in text
+    assert lines[0].strip() == "SPICE GARDEN"
+    assert lines[1].strip() == "TAX INVOICE"
+    assert "Thank you! Visit again." in "\n".join(lines)
+    assert not any("GSTIN" in line for line in lines)
 
 
 # ---------------------------------------------------- editing the catalogue

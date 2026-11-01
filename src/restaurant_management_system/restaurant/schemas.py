@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field, field_validator
 GSTIN_PATTERN = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 
 
-class ProfileIn(BaseModel):
-    name: str = Field(default="", max_length=160)
+class DetailsIn(BaseModel):
+    """What is printed on receipts besides the restaurant name (which has its own endpoint)."""
+
     address: str = Field(default="", max_length=300)
     phone: str = Field(default="", max_length=20)
     gstin: str = Field(default="", max_length=15)
@@ -29,11 +30,12 @@ class ProfileIn(BaseModel):
             raise ValueError("FSSAI licence number must be 14 digits")
         return value
 
-    @field_validator("name", "address", "phone", "receipt_footer")
+    @field_validator("address", "phone", "receipt_footer")
     @classmethod
     def strip(cls, value: str) -> str:
         return value.strip()
 
 
-class ProfileOut(ProfileIn):
+class DetailsOut(DetailsIn):
+    name: str | None = None
     model_config = {"from_attributes": True}
