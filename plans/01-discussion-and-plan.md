@@ -248,3 +248,37 @@ Scope for Friday should be confirmed against this order. Anything not finished m
 - Stage 4 (retention) and Stage 2 (chatbot) will reuse this `customers` table, with the mobile number as the WhatsApp number.
 - Mobile numbers are personal data. Consent and opt-out for marketing messages must be added before any WhatsApp campaign (DPDP Act 2023).
 - Orders created before this change have no customer link and cannot be backfilled.
+
+### 2026-10-22: Stage 3 (bookings) and Stage 4 (retention)
+
+Stage 2 (the chatbot) is **not built yet**. Bookings and retention were built first; both work from the web app.
+
+**Done**
+- `messaging/`: a `MessageProvider` interface (default `log` provider records messages without sending), a `messages` log table, and `POST /api/messaging/inbound` for the provider webhook (needs `WHATSAPP_WEBHOOK_SECRET`). It logs guest replies and handles STOP / START.
+- Bookings: owner-set opening hours, slot length, party limit, booking window and reminder lead time. Availability is checked against active tables and the bookings that overlap the slot. Status flow requested → confirmed → seated → completed, with no-show and cancelled. Confirmation, cancellation and reminder messages. Reminders run every 10 minutes (APScheduler) or on demand.
+- Retention: RFM scores (1–5) and segments (regular, new, at risk, lost) with owner-set thresholds. Campaign rules (segment, template, automatic or approval, cooldown). Approval queue. Results report (sent, waiting, rejected, opted out, replied, returned).
+- Marketing opt-out: customer fields, staff toggle on the Customers screen, STOP / START replies through the webhook, and a check when a message is queued, sent or approved.
+- Web app: the Bookings and Retention tabs are live. Migration `b2d4f6a8c0e1`.
+
+**Decisions** (change if wrong)
+- A booking holds one table for the slot. Parties are packed onto tables smallest-fit-first, and seats are not pooled across tables. No table number is stored on the booking.
+- Staff-created bookings start as *requested*; confirming one sends the guest a message.
+- Booking and bill messages are service messages and ignore the marketing opt-out. Campaign messages never do.
+- Segment order: lost, then at risk, then new, then regular. Customers with no bill are not segmented.
+- Every campaign message ends with "Reply STOP to opt out."
+- A rule messages a guest at most once per cooldown (30 days by default), including rejected ones, so a rejected message is not re-queued the next day.
+- Automatic rules run daily at 11:00 (restaurant timezone). Approval rules queue when the owner presses "Run rules now".
+- "Delivered" is not tracked: it depends on the provider. Replied and returned are counted instead.
+- Offers are not built (they belong to the chatbot stage).
+
+**Next:** Stage 2 (chatbot), which should call `booking.services.create_booking` and `get_provider`, and check `customers.services.can_receive_marketing` before any marketing message.
+
+### 2026-10-22: Restaurant name, new-order forms and bill changes
+
+**Done**
+- The restaurant name is asked for when the owner registers, stored in `restaurant_profile` and returned with the signed-in user. The header reads "Restaurant Manager - <name>". The owner can rename it in Settings.
+- The name is the first line of the customer bill (above TAX INVOICE). The kitchen ticket keeps its KITCHEN ORDER heading. Booking and campaign messages use the saved name instead of the old `RESTAURANT_NAME` setting, which is removed.
+- Order lines show each item's price next to its name. The printed bill already showed quantity x price and the line amount.
+- Takeaway and dine-in (new button, or tap a free table) open the same form: contact number and customer name are both required, and the number can be searched to find an existing customer and fill in their name. The server still accepts orders without a customer (delivery, older clients).
+- The VIP segment and its thresholds are removed. Migration `c3e5a7b9d1f2` drops the columns and pauses any rule that targeted VIP.
+

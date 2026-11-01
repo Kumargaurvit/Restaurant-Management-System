@@ -30,8 +30,11 @@ def _local(moment: datetime, zone: tzinfo) -> datetime:
     return moment.astimezone(zone)
 
 
-def render_receipt(bill: Bill, order: Order, zone: tzinfo) -> str:
-    lines = [
+def render_receipt(
+    bill: Bill, order: Order, zone: tzinfo, restaurant_name: str | None = None
+) -> str:
+    lines = [_center(restaurant_name.upper())] if restaurant_name else []
+    lines += [
         _center("TAX INVOICE"),
         _rule("="),
         _pair("Invoice:", bill.invoice_number),

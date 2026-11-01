@@ -65,6 +65,7 @@ describe("First-time setup", () => {
 
     expect(await screen.findByRole("heading", { name: "Set up your restaurant" })).toBeInTheDocument();
     expect(screen.getByLabelText("Your name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Restaurant name")).toBeRequired();
   });
 
   it("creates the owner and signs in", async () => {
@@ -75,13 +76,59 @@ describe("First-time setup", () => {
     });
     renderApp("/");
 
-    await userEvent.type(await screen.findByLabelText("Your name"), "Asha");
+    await userEvent.type(await screen.findByLabelText("Restaurant name"), "Spice Garden");
+    await userEvent.type(screen.getByLabelText("Your name"), "Asha");
     await userEvent.type(screen.getByLabelText("Email"), "asha@test.com");
     await userEvent.type(screen.getByLabelText("Password"), "password123");
     await userEvent.click(screen.getByRole("button", { name: "Create owner account" }));
 
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-    expect(api.called("POST", "/api/auth/bootstrap")[0].body.name).toBe("Asha");
+    expect(api.called("POST", "/api/auth/bootstrap")[0].body).toMatchObject({
+      name: "Asha",
+      restaurant_name: "Spice Garden",
+    });
+  });
+});
+
+describe("Register or sign in", () => {
+  it("lets a visitor switch between sign in and register", async () => {
+    mockApi({ "GET /api/auth/status": { has_users: true } });
+    renderApp("/");
+
+    await userEvent.click(await screen.findByRole("button", { name: "New restaurant? Register" }));
+    expect(screen.getByRole("heading", { name: "Register" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Restaurant name")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Already have an account? Sign in" }));
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Restaurant name")).not.toBeInTheDocument();
+  });
+
+  it("can switch to sign in before any owner exists", async () => {
+    mockApi({ "GET /api/auth/status": { has_users: false } });
+    renderApp("/");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Already have an account? Sign in" }));
+
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("explains that registration is closed once an owner exists", async () => {
+    mockApi({
+      "GET /api/auth/status": { has_users: true },
+      "POST /api/auth/bootstrap": fail(409, "Setup already completed"),
+    });
+    renderApp("/");
+
+    await userEvent.click(await screen.findByRole("button", { name: "New restaurant? Register" }));
+    expect(screen.getByText(/Only the first owner can register/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Restaurant name"), "Spice Garden");
+    await userEvent.type(screen.getByLabelText("Your name"), "Ravi");
+    await userEvent.type(screen.getByLabelText("Email"), "ravi@test.com");
+    await userEvent.type(screen.getByLabelText("Password"), "password123");
+    await userEvent.click(screen.getByRole("button", { name: "Create owner account" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("An owner account already exists");
   });
 });
 

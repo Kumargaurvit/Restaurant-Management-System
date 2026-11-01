@@ -2,7 +2,12 @@ from httpx import AsyncClient
 
 from tests.helpers import bearer
 
-SETUP = {"name": "Owner", "email": "Owner@Test.com", "password": "password123"}
+SETUP = {
+    "name": "Owner",
+    "email": "Owner@Test.com",
+    "password": "password123",
+    "restaurant_name": "Spice Garden",
+}
 
 
 async def test_status_reports_no_users_before_setup(client: AsyncClient) -> None:
@@ -110,3 +115,35 @@ async def test_non_owner_cannot_create_staff(client: AsyncClient, make_staff) ->
     )
 
     assert response.status_code == 403
+
+
+async def test_bootstrap_requires_a_restaurant_name(client: AsyncClient) -> None:
+    for bad in ({"restaurant_name": ""}, {"restaurant_name": "   "}):
+        response = await client.post("/api/auth/bootstrap", json={**SETUP, **bad})
+        assert response.status_code == 422
+    missing = {key: value for key, value in SETUP.items() if key != "restaurant_name"}
+    assert (await client.post("/api/auth/bootstrap", json=missing)).status_code == 422
+
+
+async def test_restaurant_name_comes_back_with_the_user(client: AsyncClient) -> None:
+    setup = await client.post("/api/auth/bootstrap", json=SETUP)
+    assert setup.json()["user"]["restaurant_name"] == "Spice Garden"
+
+    login = await client.post(
+        "/api/auth/login", json={"email": "owner@test.com", "password": "password123"}
+    )
+    assert login.json()["user"]["restaurant_name"] == "Spice Garden"
+    me = await client.get("/api/auth/me", headers=bearer(login.json()["access_token"]))
+    assert me.json()["restaurant_name"] == "Spice Garden"
+
+
+async def test_only_the_owner_can_rename_the_restaurant(client: AsyncClient, owner_headers, make_staff) -> None:
+    manager = await make_staff("manager")
+
+    assert (await client.get("/api/restaurant", headers=manager)).json() == {"name": "Spice Garden"}
+    assert (await client.put("/api/restaurant", headers=manager, json={"name": "X"})).status_code == 403
+    renamed = await client.put("/api/restaurant", headers=owner_headers, json={"name": " Dilli Darbar "})
+    assert renamed.json() == {"name": "Dilli Darbar"}
+    me = await client.get("/api/auth/me", headers=owner_headers)
+    assert me.json()["restaurant_name"] == "Dilli Darbar"
+    assert (await client.put("/api/restaurant", headers=owner_headers, json={"name": "  "})).status_code == 422

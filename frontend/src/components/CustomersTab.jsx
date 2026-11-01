@@ -32,6 +32,19 @@ export default function CustomersTab() {
     }
   }
 
+  async function setOptOut(optOut) {
+    setError(null);
+    try {
+      await request(`/api/customers/${detail.id}/marketing-opt-out`, {
+        method: "PUT",
+        body: { opt_out: optOut },
+      });
+      await open(detail.id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <div className="orders-layout">
       <div>
@@ -89,7 +102,12 @@ export default function CustomersTab() {
             <dd>{formatDate(detail.first_visit)}</dd>
             <dt>Last visit</dt>
             <dd>{formatDate(detail.last_visit)}</dd>
+            <dt>Marketing messages</dt>
+            <dd>{detail.marketing_opt_out ? "Opted out" : "Allowed"}</dd>
           </dl>
+          <button className="button secondary" onClick={() => setOptOut(!detail.marketing_opt_out)}>
+            {detail.marketing_opt_out ? "Allow marketing messages" : "Opt out of marketing messages"}
+          </button>
 
           <h3>Favourite dishes</h3>
           {detail.favourite_dishes.length === 0 ? (

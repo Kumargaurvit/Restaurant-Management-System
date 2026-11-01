@@ -18,7 +18,9 @@ export default function Layout() {
         >
           ☰
         </button>
-        <span className="brand">Restaurant Manager</span>
+        <span className="brand">
+          Restaurant Manager{user.restaurant_name ? ` - ${user.restaurant_name}` : ""}
+        </span>
         <span className="spacer" />
         <span className="muted user-name">
           {user.name} · {user.role}

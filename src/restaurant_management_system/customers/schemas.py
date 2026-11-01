@@ -13,6 +13,12 @@ class CustomerOut(BaseModel):
     first_visit: datetime | None
     last_visit: datetime | None
     is_returning: bool
+    marketing_opt_out: bool
+    opted_out_at: datetime | None
+
+
+class MarketingOptOutIn(BaseModel):
+    opt_out: bool
 
 
 class CustomerLookupOut(BaseModel):

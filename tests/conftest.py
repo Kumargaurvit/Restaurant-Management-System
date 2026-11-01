@@ -56,7 +56,12 @@ async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
 async def owner_headers(client: AsyncClient) -> dict[str, str]:
     response = await client.post(
         "/api/auth/bootstrap",
-        json={"name": "Owner", "email": "owner@test.com", "password": "password123"},
+        json={
+            "name": "Owner",
+            "email": "owner@test.com",
+            "password": "password123",
+            "restaurant_name": "Spice Garden",
+        },
     )
     return bearer(response.json()["access_token"])
 

@@ -505,6 +505,35 @@ async def test_receipt_shows_items_tax_total_and_payment(
     assert all(len(line) <= 42 for line in text.splitlines())
 
 
+async def test_receipt_starts_with_the_restaurant_name_and_prices_each_item(
+    client: AsyncClient, menu, owner_headers
+) -> None:
+    bill = await make_bill(client, owner_headers, menu)
+
+    text = (await client.get(f"{API}/bills/{bill['id']}/receipt", headers=owner_headers)).text
+
+    lines = text.splitlines()
+    assert lines[0].strip() == "SPICE GARDEN"
+    assert lines[1].strip() == "TAX INVOICE"
+    # Each item shows quantity x unit price and the line amount.
+    assert any("x 200.00" in line for line in lines)
+    assert any("x 50.00" in line for line in lines)
+
+
+async def test_kitchen_ticket_keeps_its_own_heading(client: AsyncClient, menu, owner_headers) -> None:
+    order = (await client.post(f"{API}/orders", headers=owner_headers, json={"order_type": "takeaway"})).json()
+    await client.post(
+        f"{API}/orders/{order['id']}/items",
+        headers=owner_headers,
+        json={"menu_item_id": menu["paneer_id"], "quantity": 1},
+    )
+    ticket = (await client.post(f"{API}/orders/{order['id']}/kot", headers=owner_headers)).json()
+
+    text = (await client.get(f"{API}/kot/{ticket['id']}/print", headers=owner_headers)).text
+
+    assert text.splitlines()[0].strip() == "KITCHEN ORDER"
+
+
 async def test_receipt_time_is_in_the_restaurant_timezone(
     client: AsyncClient, menu, owner_headers
 ) -> None:

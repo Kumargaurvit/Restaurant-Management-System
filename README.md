@@ -38,7 +38,7 @@ Planning documents are in [`plans/`](plans/01-discussion-and-plan.md).
 
 ### Customer retention
 - RFM scoring (recency, frequency, monetary value) from billing data
-- Segments: new, regular, at-risk, lost, VIP (thresholds set by the owner)
+- Segments: new, regular, at-risk, lost (thresholds set by the owner)
 - Campaign rules: segment, trigger, message template, and mode
 - Each rule is **automatic** or **needs approval**
 - Approval queue for pending messages
@@ -290,8 +290,8 @@ curl -I http://localhost:5173/
 | 0 | Project setup, Docker, config, health endpoint | Done |
 | 1 | Billing: menu, tables, orders, KOT, bills, payments, printing | Done (see notes below) |
 | 2 | WhatsApp chatbot: offers, bills, availability (tool calling) | Planned |
-| 3 | Dine-out booking | Planned |
-| 4 | Customer retention: RFM, campaigns, approval queue | Planned |
+| 3 | Dine-out booking | Done (see plan progress log) |
+| 4 | Customer retention: RFM, campaigns, approval queue | Done (see plan progress log) |
 
 Full plan and decisions: [`plans/01-discussion-and-plan.md`](plans/01-discussion-and-plan.md).
 
