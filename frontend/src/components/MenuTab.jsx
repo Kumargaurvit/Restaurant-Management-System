@@ -80,14 +80,145 @@ function CategoryRow({ category, act, reload }) {
   );
 }
 
+function SizeRow({ item, variant, act, reload }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: variant.name, price: String(Number(variant.price)) });
+
+  if (editing) {
+    return (
+      <li>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            act(async () => {
+              await request(`/api/billing/menu/variants/${variant.id}`, {
+                method: "PATCH",
+                body: { name: form.name, price: form.price },
+              });
+              setEditing(false);
+              await reload();
+            });
+          }}
+        >
+          <label>
+            {`Name of size ${variant.name}`}
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </label>
+          <label>
+            {`Price of size ${variant.name}`}
+            <input
+              inputMode="decimal"
+              value={form.price}
+              onChange={(e) => setForm({ ...form, price: e.target.value })}
+              required
+            />
+          </label>
+          <button className="button" type="submit">
+            Save size
+          </button>
+          <button className="button secondary" type="button" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <span className="line-name">
+        {variant.name} · {formatMoney(variant.price)}
+      </span>
+      <button className="button secondary" onClick={() => setEditing(true)}>
+        {`Edit size ${variant.name} of ${item.name}`}
+      </button>
+      <DeleteButton
+        label={`size ${variant.name} of ${item.name}`}
+        onDelete={() =>
+          act(async () => {
+            await request(`/api/billing/menu/variants/${variant.id}`, { method: "DELETE" });
+            await reload();
+          })
+        }
+      />
+    </li>
+  );
+}
+
+// Sizes such as Half and Full. An item that has sizes must be ordered by size.
+function SizesPanel({ item, act, reload }) {
+  const [form, setForm] = useState({ name: "", price: "" });
+
+  return (
+    <div className="sizes" aria-label={`Sizes of ${item.name}`}>
+      {item.variants.length === 0 ? (
+        <p className="muted">No sizes. {item.name} is sold at one price.</p>
+      ) : (
+        <ul>
+          {item.variants.map((variant) => (
+            <SizeRow key={variant.id} item={item} variant={variant} act={act} reload={reload} />
+          ))}
+        </ul>
+      )}
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          act(async () => {
+            await request(`/api/billing/menu/items/${item.id}/variants`, {
+              method: "POST",
+              body: { name: form.name, price: form.price },
+            });
+            setForm({ name: "", price: "" });
+            await reload();
+          });
+        }}
+      >
+        <label>
+          {`New size name for ${item.name}`}
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+        </label>
+        <label>
+          {`New size price for ${item.name}`}
+          <input
+            inputMode="decimal"
+            value={form.price}
+            onChange={(e) => setForm({ ...form, price: e.target.value })}
+            required
+          />
+        </label>
+        <button className="button" type="submit">
+          {`Add size to ${item.name}`}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+const LOW_STOCK = 5;
+
+function StockBadge({ quantity }) {
+  if (quantity === null || quantity === undefined) return null;
+  if (quantity === 0) return <span className="badge badge-low">Sold out</span>;
+  return (
+    <span className={`badge ${quantity <= LOW_STOCK ? "badge-low" : "badge-checking"}`}>
+      {quantity} left
+    </span>
+  );
+}
+
 function ItemRow({ item, categories, act, reload }) {
+  const [sizesOpen, setSizesOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: item.name,
     price: String(Number(item.price)),
     gst_rate: String(Number(item.gst_rate)),
     category_id: String(item.category_id),
+    stock: item.stock_quantity === null || item.stock_quantity === undefined ? "" : String(item.stock_quantity),
   });
+  const initialStock = item.stock_quantity === null || item.stock_quantity === undefined ? "" : String(item.stock_quantity);
   const categoryName = categories.find((c) => c.id === item.category_id)?.name ?? "";
 
   if (editing) {
@@ -98,9 +229,14 @@ function ItemRow({ item, categories, act, reload }) {
           onSubmit={(e) => {
             e.preventDefault();
             act(async () => {
+              const { stock, ...fields } = form;
               await request(`/api/billing/menu/items/${item.id}`, {
                 method: "PATCH",
-                body: { ...form, category_id: Number(form.category_id) },
+                body: {
+                  ...fields,
+                  category_id: Number(form.category_id),
+                  ...(stock !== initialStock ? { stock_quantity: stock === "" ? null : Number(stock) } : {}),
+                },
               });
               setEditing(false);
               await reload();
@@ -143,6 +279,15 @@ function ItemRow({ item, categories, act, reload }) {
               ))}
             </select>
           </label>
+          <label>
+            {`Stock of ${item.name} (leave empty if not counted)`}
+            <input
+              type="number"
+              min="0"
+              value={form.stock}
+              onChange={(e) => setForm({ ...form, stock: e.target.value })}
+            />
+          </label>
           <div className="row">
             <button className="button" type="submit">
               Save item
@@ -161,12 +306,25 @@ function ItemRow({ item, categories, act, reload }) {
       <span className="line-name">
         {item.name} <span className="muted">{categoryName}</span>
         {!item.is_available && <span className="badge badge-error">Unavailable</span>}
+        <StockBadge quantity={item.stock_quantity} />
+        {item.variants?.length > 0 && (
+          <span className="muted item-sub">
+            {item.variants.map((v) => `${v.name} ${formatMoney(v.price)}`).join(" · ")}
+          </span>
+        )}
       </span>
       <span>
         {formatMoney(item.price)} · {Number(item.gst_rate)}%
       </span>
       <button className="button secondary" onClick={() => setEditing(true)}>
         {`Edit ${item.name}`}
+      </button>
+      <button
+        className="button secondary"
+        aria-expanded={sizesOpen}
+        onClick={() => setSizesOpen((open) => !open)}
+      >
+        {`Sizes of ${item.name}`}
       </button>
       <button
         className="button secondary"
@@ -191,6 +349,7 @@ function ItemRow({ item, categories, act, reload }) {
           })
         }
       />
+      {sizesOpen && <SizesPanel item={item} act={act} reload={reload} />}
     </li>
   );
 }
@@ -280,7 +439,7 @@ function TableRow({ table, act, reload }) {
 export default function MenuTab({ categories, menuItems, tables, reload }) {
   const [error, setError] = useState(null);
   const [categoryName, setCategoryName] = useState("");
-  const [item, setItem] = useState({ category_id: "", name: "", price: "", gst_rate: "5" });
+  const [item, setItem] = useState({ category_id: "", name: "", price: "", gst_rate: "5", stock: "" });
   const [table, setTable] = useState({ name: "", capacity: "4" });
 
   // Runs an action, shows the server's message if it fails.
@@ -342,10 +501,15 @@ export default function MenuTab({ categories, menuItems, tables, reload }) {
           className="stack"
           onSubmit={(e) => {
             e.preventDefault();
+            const { stock, ...fields } = item;
             submit(
               "/api/billing/menu/items",
-              { ...item, category_id: Number(item.category_id) },
-              () => setItem({ ...item, name: "", price: "" }),
+              {
+                ...fields,
+                category_id: Number(item.category_id),
+                ...(stock !== "" ? { stock_quantity: Number(stock) } : {}),
+              },
+              () => setItem({ ...item, name: "", price: "", stock: "" }),
             );
           }}
         >
@@ -386,6 +550,15 @@ export default function MenuTab({ categories, menuItems, tables, reload }) {
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Stock (leave empty if not counted)
+            <input
+              type="number"
+              min="0"
+              value={item.stock}
+              onChange={(e) => setItem({ ...item, stock: e.target.value })}
+            />
           </label>
           <button className="button" type="submit">
             Add item

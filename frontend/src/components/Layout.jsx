@@ -2,10 +2,12 @@ import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth.jsx";
 import { MODULES } from "../modules.js";
+import { useRestaurantLogo } from "../useRestaurantLogo.js";
 
 export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, logout } = useAuth();
+  const logo = useRestaurantLogo();
 
   return (
     <div className="app">
@@ -18,6 +20,7 @@ export default function Layout() {
         >
           ☰
         </button>
+        {logo && <img className="brand-logo" src={logo} alt="Restaurant logo" />}
         <span className="brand">
           Restaurant Manager{user.restaurant_name ? ` - ${user.restaurant_name}` : ""}
         </span>

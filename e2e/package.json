@@ -1,0 +1,13 @@
+{
+  "name": "restaurant-management-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Real-browser end-to-end check of the whole app",
+  "scripts": {
+    "test": "node run.cjs",
+    "layout": "node mobile.cjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

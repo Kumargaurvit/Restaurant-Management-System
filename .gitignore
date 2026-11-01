@@ -4,3 +4,6 @@ __pycache__
 .pytest_cache
 node_modules
 dist
+
+# Browser check output (screenshots of failed steps)
+e2e/output

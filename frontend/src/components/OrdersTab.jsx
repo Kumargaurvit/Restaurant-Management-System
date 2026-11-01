@@ -3,7 +3,7 @@ import { formatMoney, request } from "../api.js";
 import NewOrderForm from "./NewOrderForm.jsx";
 import OrderPanel from "./OrderPanel.jsx";
 
-export default function OrdersTab({ tables, menuItems, categories }) {
+export default function OrdersTab({ tables, menuItems, categories, onStockChange }) {
   const [openOrders, setOpenOrders] = useState([]);
   const [unpaidBills, setUnpaidBills] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -58,9 +58,16 @@ export default function OrdersTab({ tables, menuItems, categories }) {
     }
   }
 
+  // Items that count stock go up and down as orders change, so the menu must be reloaded.
+  const tracksStock = menuItems.some((item) => item.stock_quantity !== null && item.stock_quantity !== undefined);
+  const refreshStock = () => {
+    if (tracksStock) onStockChange?.();
+  };
+
   function updateSelected(order) {
     setSelected(order);
     refresh();
+    refreshStock();
   }
 
   function submitDelivery(event) {
@@ -232,6 +239,7 @@ export default function OrdersTab({ tables, menuItems, categories }) {
           onClose={() => {
             setSelected(null);
             refresh();
+            refreshStock(); // a cancelled order gives its stock back
           }}
         />
       )}

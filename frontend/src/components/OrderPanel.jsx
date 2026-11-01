@@ -75,14 +75,36 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
     }
   }
 
-  const addItem = (menuItemId) =>
+  const addItem = (menuItemId, variantId = null) =>
     run(async () => {
       const updated = await request(`/api/billing/orders/${order.id}/items`, {
         method: "POST",
-        body: { menu_item_id: menuItemId, quantity: 1 },
+        body: {
+          menu_item_id: menuItemId,
+          quantity: 1,
+          ...(variantId === null ? {} : { variant_id: variantId }),
+        },
       });
       onOrderChange(updated);
     });
+
+  // Send the bill to the guest on WhatsApp (their number from the order, editable).
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendPhone, setSendPhone] = useState("");
+  const [sendResult, setSendResult] = useState(null);
+
+  const sendBill = (event) => {
+    event.preventDefault();
+    return run(async () => {
+      setSendResult(null);
+      const sent = await request(`/api/billing/bills/${bill.id}/send`, {
+        method: "POST",
+        body: sendPhone.trim() ? { phone: sendPhone.trim() } : {},
+      });
+      setSendResult(`Bill sent to ${sent.phone}.`);
+      setSendOpen(false);
+    });
+  };
 
   const setQuantity = (line, quantity) =>
     run(async () => {
@@ -134,7 +156,7 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
   const showReceipt = () =>
     run(async () => {
       const text = await request(`/api/billing/bills/${bill.id}/receipt`, { as: "text" });
-      setPreview({ title: `Receipt ${bill.invoice_number}`, text });
+      setPreview({ title: `Receipt ${bill.invoice_number}`, text, showLogo: true });
     });
 
   const heading =
@@ -183,18 +205,36 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
             <p className="muted">No menu items yet. Add some in the Menu tab.</p>
           ) : (
             <div className="item-grid">
-              {visibleItems.map((item) => (
-                <button
-                  key={item.id}
-                  className="item-button"
-                  disabled={busy}
-                  onClick={() => addItem(item.id)}
-                  aria-label={`Add ${item.name}`}
-                >
-                  <strong>{item.name}</strong>
-                  <span className="muted">{formatMoney(item.price)}</span>
-                </button>
-              ))}
+              {visibleItems.flatMap((item) => {
+                const soldOut = item.stock_quantity === 0;
+                const left =
+                  item.stock_quantity !== null && item.stock_quantity !== undefined && !soldOut
+                    ? `${item.stock_quantity} left`
+                    : null;
+                // An item with sizes is ordered by size: one button per size.
+                const options = item.variants?.length
+                  ? item.variants.map((variant) => ({
+                      key: `${item.id}-${variant.id}`,
+                      variantId: variant.id,
+                      label: `${item.name} (${variant.name})`,
+                      price: variant.price,
+                    }))
+                  : [{ key: String(item.id), variantId: null, label: item.name, price: item.price }];
+                return options.map((option) => (
+                  <button
+                    key={option.key}
+                    className="item-button"
+                    disabled={busy || soldOut}
+                    onClick={() => addItem(item.id, option.variantId)}
+                    aria-label={`Add ${option.label}`}
+                  >
+                    <strong>{option.label}</strong>
+                    <span className="muted">{formatMoney(option.price)}</span>
+                    {soldOut && <span className="badge badge-low">Sold out</span>}
+                    {left && <span className="muted">{left}</span>}
+                  </button>
+                ));
+              })}
             </div>
           )}
         </>
@@ -362,14 +402,51 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
               </form>
             )
           )}
-          <button className="button secondary" disabled={busy} onClick={showReceipt}>
-            Print receipt
-          </button>
+          <div className="row">
+            <button className="button secondary" disabled={busy} onClick={showReceipt}>
+              Print receipt
+            </button>
+            {canBill(user) && (
+              <button
+                className="button secondary"
+                disabled={busy}
+                onClick={() => {
+                  setSendPhone(order.customer_phone ?? "");
+                  setSendResult(null);
+                  setSendOpen((open) => !open);
+                }}
+              >
+                Send on WhatsApp
+              </button>
+            )}
+          </div>
+          {sendOpen && (
+            <form className="row" onSubmit={sendBill} aria-label="Send bill">
+              <label>
+                WhatsApp number
+                <input
+                  inputMode="tel"
+                  value={sendPhone}
+                  onChange={(e) => setSendPhone(e.target.value)}
+                  placeholder="98765 43210"
+                />
+              </label>
+              <button className="button" type="submit" disabled={busy}>
+                Send bill
+              </button>
+            </form>
+          )}
+          {sendResult && <p role="status">{sendResult}</p>}
         </div>
       )}
 
       {preview && (
-        <PrintPreview title={preview.title} text={preview.text} onClose={() => setPreview(null)} />
+        <PrintPreview
+          title={preview.title}
+          text={preview.text}
+          showLogo={preview.showLogo}
+          onClose={() => setPreview(null)}
+        />
       )}
     </section>
   );
