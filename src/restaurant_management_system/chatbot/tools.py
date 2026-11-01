@@ -63,6 +63,18 @@ TOOL_SPECS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "get_restaurant_info",
+            "description": (
+                "Get the restaurant's name, address, phone number and opening hours, and whether "
+                "it is open right now. Use it for questions like where are you, what are your "
+                "timings, or are you open."
+            ),
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_active_offers",
             "description": (
                 "Get the discounts and offers the restaurant is running right now, plus any that "
@@ -196,6 +208,21 @@ def _offer_dict(offer, ctx: ToolContext, *, active: bool) -> dict[str, Any]:
             remaining = aware(offer.valid_until) - aware(ctx.now)
             data["minutes_remaining"] = max(0, int(remaining.total_seconds() // 60))
     return data
+
+
+async def get_restaurant_info(ctx: ToolContext, args: dict) -> dict:
+    profile = await get_profile_or_blank(ctx.session)
+    hours = await get_settings_row(ctx.session)
+    clock = ctx.local_now.time().replace(second=0, microsecond=0, tzinfo=None)
+    return {
+        "name": profile.name or None,
+        "address": profile.address or None,
+        "phone": profile.phone or None,
+        "opens_at": _hhmm(hours.opens_at),
+        "closes_at": _hhmm(hours.closes_at),
+        "open_now": hours.opens_at <= clock < hours.closes_at,
+        "local_time_now": _hhmm(clock),
+    }
 
 
 async def get_active_offers(ctx: ToolContext, args: dict) -> dict:
@@ -429,6 +456,7 @@ async def request_human_handoff(ctx: ToolContext, args: dict) -> dict:
 
 
 TOOLS: dict[str, Callable[[ToolContext, dict], Awaitable[dict]]] = {
+    "get_restaurant_info": get_restaurant_info,
     "get_active_offers": get_active_offers,
     "check_table_availability": check_table_availability,
     "create_booking_request": create_booking_request,

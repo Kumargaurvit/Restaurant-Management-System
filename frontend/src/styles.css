@@ -500,7 +500,9 @@ select:focus-visible {
 }
 
 .line-name {
-  flex: 1;
+  /* A real basis (not 0) so the name wraps onto its own line instead of being squeezed
+     into the buttons when a row is crowded. */
+  flex: 1 1 11rem;
   min-width: 0;
 }
 

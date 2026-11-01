@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from restaurant_management_system.billing.models import (
     BillStatus,
     MenuCategory,
     MenuItem,
+    MenuItemVariant,
     Order,
     OrderItem,
     OrderStatus,
@@ -26,7 +27,9 @@ from restaurant_management_system.billing.receipt import render_kot, render_rece
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.customers.services import get_or_create_customer
 from restaurant_management_system.db.session import get_session
-from restaurant_management_system.restaurant.services import get_profile_or_blank
+from restaurant_management_system.customers.services import normalize_phone
+from restaurant_management_system.messaging.provider import MessageProvider, get_provider, send_message
+from restaurant_management_system.restaurant.services import FALLBACK_NAME, get_profile_or_blank
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -92,7 +95,7 @@ async def create_menu_item(
 ) -> MenuItem:
     if await session.get(MenuCategory, body.category_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
-    item = MenuItem(**body.model_dump())
+    item = MenuItem(**body.model_dump(), variants=[])
     session.add(item)
     await session.commit()
     return item
@@ -114,11 +117,73 @@ async def update_menu_item(
         if await session.get(MenuCategory, changes["category_id"]) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
     for field, value in changes.items():
-        if value is not None:
+        if value is not None or field == "stock_quantity":
             setattr(item, field, value)
     await session.commit()
     await session.refresh(item)
     return item
+
+
+async def _variant_or_404(session: AsyncSession, variant_id: int) -> MenuItemVariant:
+    variant = await session.get(MenuItemVariant, variant_id)
+    if variant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Variant not found")
+    return variant
+
+
+@router.post(
+    "/menu/items/{item_id}/variants",
+    response_model=schemas.VariantOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def create_variant(
+    item_id: int, body: schemas.VariantIn, session: AsyncSession = Depends(get_session)
+) -> MenuItemVariant:
+    item = await session.get(MenuItem, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    if any(v.name.lower() == body.name.strip().lower() for v in item.variants):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This item already has that size")
+    variant = MenuItemVariant(menu_item_id=item_id, name=body.name.strip(), price=body.price)
+    session.add(variant)
+    await session.commit()
+    await session.refresh(variant)
+    return variant
+
+
+@router.patch(
+    "/menu/variants/{variant_id}",
+    response_model=schemas.VariantOut,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def update_variant(
+    variant_id: int, body: schemas.VariantUpdate, session: AsyncSession = Depends(get_session)
+) -> MenuItemVariant:
+    variant = await _variant_or_404(session, variant_id)
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    new_name = changes.get("name", "").strip()
+    if new_name and new_name.lower() != variant.name.lower():
+        item = await session.get(MenuItem, variant.menu_item_id)
+        if any(v.name.lower() == new_name.lower() for v in item.variants):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This item already has that size")
+    for field, value in changes.items():
+        setattr(variant, field, value.strip() if field == "name" else value)
+    await session.commit()
+    await session.refresh(variant)
+    return variant
+
+
+@router.delete(
+    "/menu/variants/{variant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def delete_variant(variant_id: int, session: AsyncSession = Depends(get_session)) -> None:
+    """Safe even if it was ordered: order lines keep their own copy of the name and price."""
+    variant = await _variant_or_404(session, variant_id)
+    await session.delete(variant)
+    await session.commit()
 
 
 @router.patch(
@@ -342,11 +407,29 @@ async def add_order_item(
     if not menu_item.is_available:
         raise HTTPException(status.HTTP_409_CONFLICT, f"{menu_item.name} is not available")
 
+    variant = None
+    if menu_item.variants:
+        if body.variant_id is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose a size for {menu_item.name}"
+            )
+        variant = next((v for v in menu_item.variants if v.id == body.variant_id), None)
+        if variant is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Variant not found")
+    elif body.variant_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"{menu_item.name} has no sizes"
+        )
+    variant_id = variant.id if variant else None
+
+    await services.take_stock(session, menu_item.id, body.quantity)
+
     existing = next(
         (
             line
             for line in order.items
             if line.menu_item_id == menu_item.id
+            and line.variant_id == variant_id
             and line.kitchen_ticket_id is None
             and line.notes == body.notes
         ),
@@ -359,8 +442,10 @@ async def add_order_item(
             OrderItem(
                 order_id=order.id,
                 menu_item_id=menu_item.id,
-                name=menu_item.name,
-                unit_price=menu_item.price,
+                variant_id=variant_id,
+                # Copied so later menu edits never change an existing order.
+                name=f"{menu_item.name} ({variant.name})" if variant else menu_item.name,
+                unit_price=variant.price if variant else menu_item.price,
                 gst_rate=menu_item.gst_rate,
                 quantity=body.quantity,
                 notes=body.notes,
@@ -386,6 +471,12 @@ async def update_order_item(
     line = next((line for line in order.items if line.id == item_id), None)
     if line is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order item not found")
+
+    change = body.quantity - line.quantity
+    if change > 0:
+        await services.take_stock(session, line.menu_item_id, change)
+    elif change < 0:
+        await services.return_stock(session, line.menu_item_id, -change)
 
     if body.quantity == 0:
         order.items.remove(line)
@@ -422,6 +513,8 @@ async def set_order_customer(
 async def cancel_order(order_id: int, session: AsyncSession = Depends(get_session)) -> Order:
     order = await services.get_order(session, order_id)
     services.require_open(order)
+    for line in order.items:
+        await services.return_stock(session, line.menu_item_id, line.quantity)
     order.status = OrderStatus.CANCELLED.value
     await session.commit()
     return await services.get_order(session, order_id)
@@ -534,6 +627,42 @@ async def print_receipt(
     return Response(text, media_type="text/plain; charset=utf-8")
 
 
+@router.post(
+    "/bills/{bill_id}/send",
+    response_model=schemas.SendBillOut,
+    dependencies=[Depends(require_roles(*BILLERS))],
+)
+async def send_bill(
+    bill_id: int,
+    body: schemas.SendBillIn,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    provider: MessageProvider = Depends(get_provider),
+) -> schemas.SendBillOut:
+    """Send the receipt to the guest on WhatsApp. A bill is a service message, so the guest's
+    marketing opt-out does not stop it."""
+    bill = await services.get_bill(session, bill_id)
+    raw = body.phone or bill.order.customer_phone
+    if not raw:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This bill has no guest number. Enter one to send it."
+        )
+    phone = normalize_phone(raw)
+    profile = await get_profile_or_blank(session)
+    receipt = render_receipt(bill, bill.order, ZoneInfo(settings.timezone), profile)
+    text = (
+        f"Thank you for visiting {profile.name or FALLBACK_NAME}! Here is your bill:\n"
+        f"```\n{receipt.rstrip()}\n```"
+    )
+    message = await send_message(session, provider, phone, text, "bill")
+    await session.commit()  # keep the log row even when sending failed
+    if message.status != "sent":
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Could not send the message. Please try again."
+        )
+    return schemas.SendBillOut(phone=phone, status="sent")
+
+
 # ------------------------------------------------------------- reports
 
 
@@ -549,7 +678,9 @@ async def daily_sales(
 ) -> schemas.DailySalesOut:
     zone = ZoneInfo(settings.timezone)
     day = day or datetime.now(zone).date()
-    start = datetime.combine(day, time.min, tzinfo=zone)
+    # Timestamps are stored in UTC, so compare in UTC. (Some databases ignore the time zone on a
+    # bound value, which would shift the day by the restaurant's UTC offset.)
+    start = datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
     end = start + timedelta(days=1)
 
     bill_count, total_sales = (

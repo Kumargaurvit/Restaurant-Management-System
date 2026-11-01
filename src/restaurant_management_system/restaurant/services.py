@@ -32,7 +32,7 @@ async def get_profile_or_blank(session: AsyncSession) -> RestaurantProfile:
     profile = await get_profile(session)
     if profile is None:
         return RestaurantProfile(
-            name="", address="", phone="", gstin="", fssai="", receipt_footer=""
+            name="", address="", phone="", gstin="", fssai="", receipt_footer="", logo=""
         )
     return profile
 

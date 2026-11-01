@@ -1,9 +1,9 @@
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from restaurant_management_system.chatbot.llm import LLMClient, LLMUnavailableError
@@ -24,6 +24,11 @@ FALLBACK_REPLY = (
 )
 
 
+RATE_LIMIT_REPLY = (
+    "You're sending messages very quickly. Please wait a little while and try again."
+)
+
+
 def fallback_reply(settings: Settings) -> str:
     if settings.owner_contact:
         return f"{FALLBACK_REPLY} For anything urgent, contact {settings.owner_contact}."
@@ -34,6 +39,7 @@ SYSTEM_PROMPT = """\
 You are the WhatsApp assistant for {restaurant}. It is {now} (restaurant local time).
 
 What you can do, using your tools:
+- Tell guests the restaurant's address, phone number and opening hours, and whether it is open now.
 - Tell guests about the discounts and offers running now or starting soon.
 - Tell guests whether there is room right now, or which booking slots are free on a given day.
 - Request a table booking for the guest. The restaurant confirms it afterwards and the guest is told here.
@@ -58,6 +64,7 @@ class ChatResult:
     reply: str
     conversation: Conversation
     needs_human: bool
+    rate_limited: bool = False
 
 
 async def get_or_create_conversation(session: AsyncSession, phone: str) -> Conversation:
@@ -78,6 +85,25 @@ async def _history(session: AsyncSession, conversation: Conversation, limit: int
         .limit(limit)
     )
     return [{"role": m.role, "content": m.content} for m in reversed(list(rows))]
+
+
+async def _is_rate_limited(
+    session: AsyncSession, conversation: Conversation, settings: Settings
+) -> bool:
+    limit = settings.chat_max_messages_per_hour
+    if limit <= 0:
+        return False
+    since = datetime.now(UTC) - timedelta(hours=1)  # real time, whatever clock the bot is given
+    sent = await session.scalar(
+        select(func.count())
+        .select_from(ChatMessage)
+        .where(
+            ChatMessage.conversation_id == conversation.id,
+            ChatMessage.role == "user",
+            ChatMessage.created_at >= since,
+        )
+    )
+    return (sent or 0) >= limit
 
 
 async def _save(session: AsyncSession, conversation: Conversation, role: str, content: str) -> None:
@@ -131,6 +157,14 @@ async def handle_guest_message(
     now = now or utcnow()
 
     conversation = await get_or_create_conversation(session, phone)
+    if await _is_rate_limited(session, conversation, settings):
+        # Nothing is stored and the model is not called, so a flood costs almost nothing.
+        return ChatResult(
+            reply=RATE_LIMIT_REPLY,
+            conversation=conversation,
+            needs_human=conversation.needs_human,
+            rate_limited=True,
+        )
     history = await _history(session, conversation, settings.chat_history_messages)
     await _save(session, conversation, "user", text)
 

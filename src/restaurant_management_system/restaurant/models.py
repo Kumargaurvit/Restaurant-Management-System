@@ -1,4 +1,4 @@
-from sqlalchemy import String
+from sqlalchemy import String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from restaurant_management_system.db.base import Base
@@ -19,3 +19,5 @@ class RestaurantProfile(Base):
     gstin: Mapped[str] = mapped_column(String(15), default="", server_default="")
     fssai: Mapped[str] = mapped_column(String(14), default="", server_default="")
     receipt_footer: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # A small image as a data URL (see restaurant.schemas). Shown in the app header and bill preview.
+    logo: Mapped[str] = mapped_column(Text, default="", server_default="")

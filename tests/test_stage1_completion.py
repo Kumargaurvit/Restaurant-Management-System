@@ -38,6 +38,7 @@ async def test_details_are_blank_until_saved_but_the_name_is_there(client: Async
         "gstin": "",
         "fssai": "",
         "receipt_footer": "",
+        "logo": "",
     }
 
 
@@ -46,7 +47,7 @@ async def test_owner_can_save_and_read_the_details(client: AsyncClient, owner_he
     read = await client.get(PROFILE_URL, headers=owner_headers)
 
     assert saved.status_code == 200
-    assert read.json() == {"name": "Spice Garden", **PROFILE}
+    assert read.json() == {"name": "Spice Garden", "logo": "", **PROFILE}
 
 
 async def test_saving_details_does_not_change_the_restaurant_name(client: AsyncClient, owner_headers) -> None:

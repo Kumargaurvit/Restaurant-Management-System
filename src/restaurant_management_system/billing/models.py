@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from restaurant_management_system.db.base import Base
@@ -50,8 +50,26 @@ class MenuItem(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     gst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("5.00"))
     is_available: Mapped[bool] = mapped_column(default=True)
+    # How many are left. None means stock is not tracked for this item.
+    stock_quantity: Mapped[int | None] = mapped_column(default=None)
 
     category: Mapped[MenuCategory] = relationship(back_populates="items")
+    # Sizes such as Half and Full. An item with variants must be ordered by variant.
+    variants: Mapped[list["MenuItemVariant"]] = relationship(
+        back_populates="item", order_by="MenuItemVariant.id", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class MenuItemVariant(Base):
+    __tablename__ = "menu_item_variants"
+    __table_args__ = (UniqueConstraint("menu_item_id", "name", name="uq_variant_name_per_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+
+    item: Mapped["MenuItem"] = relationship(back_populates="variants")
 
 
 class RestaurantTable(Base):
@@ -100,6 +118,7 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id"))
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("menu_item_variants.id", ondelete="SET NULL"))
     # Name, price and GST are copied so later menu edits never change an existing order.
     name: Mapped[str] = mapped_column(String(160))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))

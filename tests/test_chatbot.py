@@ -102,6 +102,7 @@ async def test_model_receives_system_prompt_with_restaurant_name_and_tools(
     assert "Spice Route" in system["content"]
     assert "cannot take food orders" in system["content"]
     assert {t["function"]["name"] for t in first["tools"]} == {
+        "get_restaurant_info",
         "get_active_offers",
         "check_table_availability",
         "create_booking_request",
