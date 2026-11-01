@@ -9,30 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from restaurant_management_system.billing.models import Bill
 from restaurant_management_system.customers.services import normalize_phone
+from tests.helpers import place_order
 
 API = "/api/billing"
-
-
-async def place_order(
-    client: AsyncClient, headers, menu, items: dict[str, int], phone=None, name=None, bill=True
-) -> dict:
-    """Create a takeaway order for a customer, add items by key (paneer/cola), optionally bill."""
-    body = {"order_type": "takeaway"}
-    if phone:
-        body["customer_phone"] = phone
-    if name:
-        body["customer_name"] = name
-    order = (await client.post(f"{API}/orders", headers=headers, json=body)).json()
-    for key, quantity in items.items():
-        await client.post(
-            f"{API}/orders/{order['id']}/items",
-            headers=headers,
-            json={"menu_item_id": menu[f"{key}_id"], "quantity": quantity},
-        )
-    if not bill:
-        return order
-    response = await client.post(f"{API}/orders/{order['id']}/bill", headers=headers, json={})
-    return response.json()
 
 
 # ------------------------------------------------------- phone numbers

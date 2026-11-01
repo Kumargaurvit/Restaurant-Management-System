@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 # Settings requires JWT_SECRET_KEY. Give tests a value so they run without a real .env.
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-bytes-long")
+os.environ.setdefault("BCRYPT_ROUNDS", "4")  # cheap hashing keeps the suite fast
 
 from restaurant_management_system.config import get_settings  # noqa: E402
 from restaurant_management_system.db.base import Base  # noqa: E402
@@ -38,15 +39,20 @@ async def engine() -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture
-async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
-    app = create_app()
+def app(engine: AsyncEngine):
+    application = create_app()
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
 
     async def override_session():
         async with sessionmaker() as session:
             yield session
 
-    app.dependency_overrides[get_session] = override_session
+    application.dependency_overrides[get_session] = override_session
+    return application
+
+
+@pytest.fixture
+async def client(app) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:
         yield async_client

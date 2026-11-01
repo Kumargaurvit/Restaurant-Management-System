@@ -1,7 +1,9 @@
+import textwrap
 from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
 
 from restaurant_management_system.billing.models import Bill, KitchenTicket, Order
+from restaurant_management_system.restaurant.models import RestaurantProfile
 
 WIDTH = 42  # characters per line on a 3-inch thermal printer
 
@@ -30,8 +32,33 @@ def _local(moment: datetime, zone: tzinfo) -> datetime:
     return moment.astimezone(zone)
 
 
-def render_receipt(bill: Bill, order: Order, zone: tzinfo) -> str:
+def _wrap(text: str) -> list[str]:
+    return textwrap.wrap(text, WIDTH) or []
+
+
+def _header(profile: RestaurantProfile | None) -> list[str]:
+    if profile is None:
+        return []
+    lines = []
+    if profile.name:
+        lines.append(_center(profile.name.upper()))
+    lines.extend(_center(part) for part in _wrap(profile.address))
+    if profile.phone:
+        lines.append(_center(f"Ph: {profile.phone}"))
+    if profile.gstin:
+        lines.append(_center(f"GSTIN: {profile.gstin}"))
+    if profile.fssai:
+        lines.append(_center(f"FSSAI: {profile.fssai}"))
+    if lines:
+        lines.append(_rule("-"))
+    return lines
+
+
+def render_receipt(
+    bill: Bill, order: Order, zone: tzinfo, profile: RestaurantProfile | None = None
+) -> str:
     lines = [
+        *_header(profile),
         _center("TAX INVOICE"),
         _rule("="),
         _pair("Invoice:", bill.invoice_number),
@@ -65,7 +92,8 @@ def render_receipt(bill: Bill, order: Order, zone: tzinfo) -> str:
         lines.append(_pair(payment.mode.upper(), _amount(payment.amount)))
     lines.append(_pair("Status", bill.status.upper()))
     lines.append("")
-    lines.append(_center("Thank you! Visit again."))
+    footer = profile.receipt_footer if profile and profile.receipt_footer else "Thank you! Visit again."
+    lines.extend(_center(part) for part in _wrap(footer))
     return "\n".join(lines) + "\n"
 
 

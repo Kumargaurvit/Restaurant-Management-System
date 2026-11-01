@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from restaurant_management_system.auth import models as auth_models  # noqa: F401
 from restaurant_management_system.billing import models as billing_models  # noqa: F401
+from restaurant_management_system.chatbot import models as chatbot_models  # noqa: F401
 from restaurant_management_system.config import get_settings
 from restaurant_management_system.customers import models as customer_models  # noqa: F401
 from restaurant_management_system.db.base import Base
+from restaurant_management_system.restaurant import models as restaurant_models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -9,27 +9,28 @@ Planning documents are in [`plans/`](plans/01-discussion-and-plan.md).
 ## Features
 
 ### Billing
-- Restaurant profile with GSTIN and FSSAI details
-- Menu management (categories, items, variants, GST rate per item, availability)
+- Restaurant profile (name, address, phone, GSTIN, FSSAI, footer) printed on every receipt
+- Menu management: add, edit, move, delete and mark unavailable (categories, items, GST rate per item), and edit or deactivate tables
 - Tables for dine-in, plus takeaway and delivery orders
 - KOT (kitchen order tickets)
 - Bills with GST breakdown and invoice numbering
 - Payments: cash, UPI, card, and split payments
 - Thermal printer output for bills and KOT
-- Owner-configured offers and manual discounts at bill time
+- Owner-configured offers, applied at bill time with one tap, plus manual discounts
+- Staff management: add staff, change roles, deactivate, reset passwords (owner)
 - Staff roles: owner, manager, cashier, waiter
 - Daily sales reports
 - **Customer records:** a guest's mobile number on an order creates (or finds) their customer record, so every order, visit and dish is remembered
 - **Insights:** most ordered dishes and most frequent returning customers, for the last 7, 30 or 90 days or all time
 
 ### WhatsApp chatbot
-- Answers guest questions about current offers
-- Checks table availability for a date, time, and party size
-- Looks up and sends bills
-- Creates dine-out bookings
-- Replies in the guest's language (multilingual through `gpt-4.1-mini`)
-- Does **not** take orders
-- Hands off to the owner when it cannot answer
+- Answers guest questions about current offers, using only the offers the owner has set up (it never invents a discount)
+- Says whether a table is free **right now** for a party size
+- Shows a guest their own recent bills and sends a receipt (only ever the bills for the guest's own number)
+- Replies in the guest's language (multilingual through `gpt-4.1-mini` with tool calling)
+- Does **not** take food orders or table reservations; it hands those to a person
+- Hands the chat to a person when it cannot answer or the guest is upset; these show in a "needs a person" queue
+- Owner screens: **Offers**, **Conversations**, and a **Test chat** to try the bot without WhatsApp
 
 ### Dine-out booking
 - Opening hours, slot length, and table capacity set by the owner
@@ -181,7 +182,7 @@ curl http://localhost:8000/health
 3. Open **Billing → Menu & tables**: add categories, menu items (price excluding GST, plus GST rate) and tables.
 4. Open **Billing → Orders**: tap a free table, tap menu items, **Send to kitchen**, **Generate bill**, **Take payment**, **Print receipt**.
 
-Roles (an owner adds staff through `POST /api/auth/users`; a staff screen is not built yet):
+Roles (the owner adds and manages staff in **Settings → Staff**):
 
 | Role | Can do |
 |---|---|
@@ -207,6 +208,37 @@ API: `GET /api/customers`, `GET /api/customers/{id}`, `GET /api/customers/lookup
 - Item name, price and GST rate are copied onto the order, so later menu edits never change an existing order.
 - Receipts and kitchen tickets are plain text at 42 characters wide (3-inch thermal printers). The browser **Print** button prints just the receipt.
 - "Today" in reports and printed times use `TIMEZONE` (default `Asia/Kolkata`).
+
+---
+
+## WhatsApp Bot
+
+### Turning the bot on
+1. Put your OpenAI key in `.env`: `OPENAI_API_KEY=sk-...` (model defaults to `gpt-4.1-mini`), then restart the backend.
+2. Open **WhatsApp Bot → Test chat** and talk to it as a guest. Nothing is sent to WhatsApp from there.
+3. Without a key the bot is "off": every guest message gets a polite fallback and is flagged for a person.
+
+### Offers
+Open **WhatsApp Bot → Offers**. The bot only quotes offers listed here. Each offer has a title, details, an optional discount percentage, and an optional start and end time.
+For a discount that changes over time (for example 15% for the next 2 hours, then 10%), create **one offer per period**: the first ends in 2 hours, the second starts then. The bot will tell a guest about both. Pause an offer to hide it without deleting it.
+Percentage offers also appear as **Apply ...** buttons next to the discount box when billing.
+
+### Conversations and hand-off
+**WhatsApp Bot → Conversations** lists every guest chat, with the ones that need a person first. Open one to read the thread and why the bot handed it over, then **Mark as handled**. Replying from the app is not built yet: reply to the guest on WhatsApp.
+
+### Connecting real WhatsApp (later)
+The WhatsApp provider is not chosen yet. Messaging sits behind an interface (`messaging/base.py`), and today only a console provider that logs messages exists. Inbound messages arrive at:
+
+```
+POST /api/chat/webhook
+X-Webhook-Secret: <WEBHOOK_SECRET>
+{"phone": "9810000001", "text": "is there space for 2?"}
+```
+
+The webhook is **disabled** until `WEBHOOK_SECRET` is set in `.env`. The reply is returned in the response and sent through the provider. Adapting a provider's own payload format to this one is a small piece of glue code.
+
+### What the bot can use
+`get_active_offers`, `check_table_availability`, `get_my_recent_bills`, `get_bill_receipt`, `request_human_handoff`. Every tool is scoped to the guest's own phone number taken from the webhook, never from the model, so a guest cannot read another guest's data.
 
 ---
 
@@ -242,8 +274,13 @@ All configuration is read from `.env` through the `Settings` class in `src/resta
 | `JWT_SECRET_KEY` | none (required) | Signs login tokens |
 | `JWT_ALGORITHM` | `HS256` | Token signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `720` | Login session length |
-| `OPENAI_API_KEY` | empty | Key for the chatbot |
+| `BCRYPT_ROUNDS` | `12` | Password hashing cost (tests use a low value) |
+| `OPENAI_API_KEY` | empty | Key for the chatbot. Empty means the bot only sends the fallback reply |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Chatbot model |
+| `WEBHOOK_SECRET` | empty | Shared secret for `POST /api/chat/webhook`. Empty disables the webhook |
+| `MESSAGING_PROVIDER` | `console` | Outbound WhatsApp provider (only `console` exists) |
+| `CHAT_HISTORY_MESSAGES` | `12` | Recent messages sent to the model for context |
+| `CHAT_MAX_TOOL_ROUNDS` | `4` | Most tool-calling rounds per guest message |
 | `CORS_ORIGINS` | `["http://localhost:5173"]` | Frontend origins allowed to call the API |
 
 ---
@@ -289,7 +326,7 @@ curl -I http://localhost:5173/
 |---|---|---|
 | 0 | Project setup, Docker, config, health endpoint | Done |
 | 1 | Billing: menu, tables, orders, KOT, bills, payments, printing | Done (see notes below) |
-| 2 | WhatsApp chatbot: offers, bills, availability (tool calling) | Planned |
+| 2 | WhatsApp chatbot: offers, bills, availability (tool calling) | Done, except a real WhatsApp provider (see notes below) |
 | 3 | Dine-out booking | Planned |
 | 4 | Customer retention: RFM, campaigns, approval queue | Planned |
 
@@ -301,5 +338,7 @@ Full plan and decisions: [`plans/01-discussion-and-plan.md`](plans/01-discussion
 
 - Customer orders through WhatsApp
 - Cities other than Delhi
-- Choosing a WhatsApp provider (deferred)
+- Choosing a WhatsApp provider (deferred). The bot works through the test chat and the webhook only.
+- Table reservations and food orders through the bot (reservations arrive in Stage 3)
+- Inventory and payment gateway integration
 - Cloud hosting (local Docker only)

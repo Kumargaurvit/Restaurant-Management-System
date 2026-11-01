@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { API_URL, getHealth } from "../api.js";
+import { canManage, useAuth } from "../auth.jsx";
+import ProfileSection from "../components/ProfileSection.jsx";
+import StaffSection from "../components/StaffSection.jsx";
 
 export default function Settings() {
+  const { user } = useAuth();
   const [environment, setEnvironment] = useState("loading...");
   const [error, setError] = useState(null);
 
@@ -18,9 +22,14 @@ export default function Settings() {
   }, []);
 
   return (
-    <section>
+    <section className="stack">
       <h1>Settings</h1>
+
+      {canManage(user) && <ProfileSection />}
+      {user?.role === "owner" && <StaffSection />}
+
       <div className="card">
+        <h2>System</h2>
         <p>
           <strong>API URL:</strong> {API_URL}
         </p>

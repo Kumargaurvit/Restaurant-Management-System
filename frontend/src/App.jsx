@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth.jsx";
 import Layout from "./components/Layout.jsx";
 import Billing from "./pages/Billing.jsx";
+import Chatbot from "./pages/Chatbot.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Login from "./pages/Login.jsx";
 import ModulePage from "./pages/ModulePage.jsx";
@@ -25,6 +26,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route index element={<Dashboard />} />
         <Route path="billing" element={<Billing />} />
+        <Route path="chatbot" element={<Chatbot />} />
         <Route path="settings" element={<Settings />} />
         <Route path=":modulePath" element={<ModulePage />} />
       </Route>

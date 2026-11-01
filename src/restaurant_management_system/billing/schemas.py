@@ -28,7 +28,13 @@ class MenuItemCreate(BaseModel):
     gst_rate: Decimal = Field(default=Decimal("5.00"), ge=0, le=28)
 
 
+class CategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    sort_order: int | None = None
+
+
 class MenuItemUpdate(BaseModel):
+    category_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=160)
     price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     gst_rate: Decimal | None = Field(default=None, ge=0, le=28)
@@ -47,6 +53,12 @@ class MenuItemOut(ORMModel):
 class TableCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     capacity: int = Field(default=2, ge=1, le=50)
+
+
+class TableUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    capacity: int | None = Field(default=None, ge=1, le=50)
+    is_active: bool | None = None
 
 
 class TableOut(ORMModel):

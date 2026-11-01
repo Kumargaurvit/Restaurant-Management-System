@@ -248,3 +248,39 @@ Scope for Friday should be confirmed against this order. Anything not finished m
 - Stage 4 (retention) and Stage 2 (chatbot) will reuse this `customers` table, with the mobile number as the WhatsApp number.
 - Mobile numbers are personal data. Consent and opt-out for marketing messages must be added before any WhatsApp campaign (DPDP Act 2023).
 - Orders created before this change have no customer link and cannot be backfilled.
+
+### 2026-10-22: Stage 1 completion and Stage 2 (WhatsApp chatbot), branch `ms-phase-2`
+
+**Stage 1 items completed**
+- Restaurant profile (name, address, phone, GSTIN with format check, FSSAI, footer) printed on receipts. Migration `9120eff7227e`.
+- Edit and delete for menu categories, items and tables. Deleting is blocked when history exists (an ordered item must be marked unavailable, a used table deactivated, a category with items kept), so past orders never break.
+- Staff management in Settings (owner): add staff, change role, deactivate and reactivate, reset password. The last active owner cannot be removed and owners cannot demote or deactivate themselves.
+- Password hashing cost is now a setting (`BCRYPT_ROUNDS`), which also made the test suite about four times faster.
+
+**Still not built from Stage 1** (decided to defer)
+- Inventory and stock tracking.
+- Payment gateway integration (UPI and card are recorded manually).
+- Direct thermal printer (ESC/POS) support; receipts print through the browser.
+
+**Stage 2 built**
+- Offers: owner-configured with optional start and end times, status (active, upcoming, expired, paused), and a one-tap "Apply" at billing. No discount values are hard-coded; time-based discounts are modelled as several offers.
+- Chat engine: `gpt-4.1-mini` with tool calling, history of the last 12 messages, up to 4 tool rounds, and a polite fallback (plus hand-off flag) when the model is off, fails or returns nothing.
+- Tools: `get_active_offers`, `check_table_availability` (right now), `get_my_recent_bills`, `get_bill_receipt`, `request_human_handoff`. All scoped to the guest's phone from the webhook, verified by tests that deliberately break the scoping.
+- Conversations stored per guest, with a "needs a person" queue and Mark as handled.
+- Inbound webhook protected by `WEBHOOK_SECRET` (disabled when empty); a console provider stands in for WhatsApp. A **Test chat** screen lets the owner try the bot with no WhatsApp at all.
+- Migration `6ee78296e767`.
+
+**Decisions** (change if wrong)
+- Table availability means free **right now**. Date and time reservations are Stage 3.
+- The bot never takes food orders or reservations; it hands them to a person.
+- Guests are identified by their WhatsApp number, the same 10-digit number used for customers.
+- Replying to a guest from the app is not built; the owner replies on WhatsApp.
+- Guest messages are cut at 1,000 characters.
+
+**Not done in Stage 2**
+- A real WhatsApp provider (still undecided) and its payload adapter.
+- Rate limiting and per-guest message caps, and OpenAI cost tracking.
+- Opening hours are not modelled, so the bot cannot answer "are you open?".
+- The bot has never been run against the real OpenAI API, because no key is configured. Everything around the model is tested with a scripted model; the real client is tested against a fake SDK response.
+
+**Next:** Stage 3 (dine-out booking), which also upgrades the bot's availability tool and adds a booking tool.

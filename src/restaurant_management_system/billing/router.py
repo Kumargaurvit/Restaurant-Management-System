@@ -26,6 +26,7 @@ from restaurant_management_system.billing.receipt import render_kot, render_rece
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.customers.services import get_or_create_customer
 from restaurant_management_system.db.session import get_session
+from restaurant_management_system.restaurant.services import get_profile
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -108,10 +109,74 @@ async def update_menu_item(
     item = await session.get(MenuItem, item_id)
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
-    for field, value in body.model_dump(exclude_unset=True).items():
-        setattr(item, field, value)
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("category_id") is not None:
+        if await session.get(MenuCategory, changes["category_id"]) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    for field, value in changes.items():
+        if value is not None:
+            setattr(item, field, value)
     await session.commit()
+    await session.refresh(item)
     return item
+
+
+@router.patch(
+    "/menu/categories/{category_id}",
+    response_model=schemas.CategoryOut,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def update_category(
+    category_id: int, body: schemas.CategoryUpdate, session: AsyncSession = Depends(get_session)
+) -> MenuCategory:
+    category = await session.get(MenuCategory, category_id)
+    if category is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    changes = body.model_dump(exclude_unset=True)
+    new_name = changes.get("name")
+    if new_name and new_name != category.name:
+        if await session.scalar(select(MenuCategory).where(MenuCategory.name == new_name)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Category already exists")
+    for field, value in changes.items():
+        if value is not None:
+            setattr(category, field, value)
+    await session.commit()
+    return category
+
+
+@router.delete(
+    "/menu/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def delete_category(category_id: int, session: AsyncSession = Depends(get_session)) -> None:
+    category = await session.get(MenuCategory, category_id)
+    if category is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    if await session.scalar(select(MenuItem.id).where(MenuItem.category_id == category_id)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Move or delete this category's items first"
+        )
+    await session.delete(category)
+    await session.commit()
+
+
+@router.delete(
+    "/menu/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def delete_menu_item(item_id: int, session: AsyncSession = Depends(get_session)) -> None:
+    item = await session.get(MenuItem, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    if await session.scalar(select(OrderItem.id).where(OrderItem.menu_item_id == item_id).limit(1)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This item has been ordered before. Mark it unavailable instead.",
+        )
+    await session.delete(item)
+    await session.commit()
 
 
 # -------------------------------------------------------------- tables
@@ -141,6 +206,53 @@ async def create_table(
     session.add(table)
     await session.commit()
     return table
+
+
+@router.patch(
+    "/tables/{table_id}",
+    response_model=schemas.TableOut,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def update_table(
+    table_id: int, body: schemas.TableUpdate, session: AsyncSession = Depends(get_session)
+) -> RestaurantTable:
+    table = await session.get(RestaurantTable, table_id)
+    if table is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Table not found")
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    new_name = changes.get("name")
+    if new_name and new_name != table.name:
+        if await session.scalar(select(RestaurantTable).where(RestaurantTable.name == new_name)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Table already exists")
+    if changes.get("is_active") is False:
+        busy = await session.scalar(
+            select(Order.id).where(
+                Order.table_id == table_id, Order.status == OrderStatus.OPEN.value
+            )
+        )
+        if busy is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Table has an open order")
+    for field, value in changes.items():
+        setattr(table, field, value)
+    await session.commit()
+    return table
+
+
+@router.delete(
+    "/tables/{table_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(*MANAGERS))],
+)
+async def delete_table(table_id: int, session: AsyncSession = Depends(get_session)) -> None:
+    table = await session.get(RestaurantTable, table_id)
+    if table is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Table not found")
+    if await session.scalar(select(Order.id).where(Order.table_id == table_id).limit(1)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This table has order history. Deactivate it instead."
+        )
+    await session.delete(table)
+    await session.commit()
 
 
 # -------------------------------------------------------------- orders
@@ -417,7 +529,8 @@ async def print_receipt(
     settings: Settings = Depends(get_settings),
 ) -> Response:
     bill = await services.get_bill(session, bill_id)
-    text = render_receipt(bill, bill.order, ZoneInfo(settings.timezone))
+    profile = await get_profile(session)
+    text = render_receipt(bill, bill.order, ZoneInfo(settings.timezone), profile)
     return Response(text, media_type="text/plain; charset=utf-8")
 
 
