@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from restaurant_management_system.chatbot.llm import LLMClient, get_optional_llm
+from restaurant_management_system.chatbot.service import handle_guest_message
 from restaurant_management_system.config import Settings, get_settings
 from restaurant_management_system.customers.services import (
     get_or_create_customer,
@@ -35,11 +37,13 @@ async def inbound_message(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     provider: MessageProvider = Depends(get_provider),
+    llm: LLMClient | None = Depends(get_optional_llm),
 ) -> dict[str, str]:
-    """Where the WhatsApp provider delivers guest replies.
+    """Where the WhatsApp provider delivers guest messages. This is the one inbound entry point.
 
-    Logs every reply (the retention report counts replies to campaigns) and handles
-    STOP / START so a guest can opt out of marketing or back in.
+    Every message is logged (the retention report counts replies to campaigns). STOP / START
+    let a guest opt out of marketing or back in. Anything else goes to the chatbot, whose
+    reply is sent back through the provider.
     """
     expected = settings.whatsapp_webhook_secret
     if not expected or not hmac.compare_digest(x_webhook_secret, expected):
@@ -67,6 +71,10 @@ async def inbound_message(
             session, provider, phone, "You are subscribed to our offers again.", "chat"
         )
         action = "opted_in"
+    else:
+        result = await handle_guest_message(session, llm, settings, phone, body.text)
+        await send_message(session, provider, phone, result.reply, "chat")
+        action = "replied"
     await session.commit()
     return {"action": action}
 

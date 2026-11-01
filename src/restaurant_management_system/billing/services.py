@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,7 @@ from restaurant_management_system.billing.models import (
     BillStatus,
     InvoiceCounter,
     KitchenTicket,
+    MenuItem,
     Order,
     OrderStatus,
     Payment,
@@ -150,3 +151,36 @@ async def record_payment(session: AsyncSession, bill: Bill, body: PaymentCreate)
         bill.status = BillStatus.PAID.value
     await session.commit()
     return await get_bill(session, bill.id)
+
+
+async def take_stock(session: AsyncSession, menu_item_id: int, quantity: int) -> None:
+    """Remove stock for items that are tracked. The UPDATE is atomic, so two waiters cannot both
+    take the last portion."""
+    item = await session.get(MenuItem, menu_item_id)
+    if item is None or item.stock_quantity is None:
+        return
+    result = await session.execute(
+        update(MenuItem)
+        .where(MenuItem.id == menu_item_id, MenuItem.stock_quantity >= quantity)
+        .values(stock_quantity=MenuItem.stock_quantity - quantity)
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(item, attribute_names=["stock_quantity"])
+    if result.rowcount == 0:
+        left = item.stock_quantity or 0
+        message = f"{item.name} is sold out" if left == 0 else f"Only {left} left of {item.name}"
+        raise HTTPException(status.HTTP_409_CONFLICT, message)
+
+
+async def return_stock(session: AsyncSession, menu_item_id: int, quantity: int) -> None:
+    """Put stock back when a line is reduced, removed, or its order is cancelled."""
+    item = await session.get(MenuItem, menu_item_id)
+    if item is None or item.stock_quantity is None:
+        return
+    await session.execute(
+        update(MenuItem)
+        .where(MenuItem.id == menu_item_id, MenuItem.stock_quantity.is_not(None))
+        .values(stock_quantity=MenuItem.stock_quantity + quantity)
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(item, attribute_names=["stock_quantity"])

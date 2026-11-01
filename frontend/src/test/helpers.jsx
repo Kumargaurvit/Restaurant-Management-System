@@ -39,6 +39,10 @@ export function mockApi(routes) {
 }
 
 function response(status, payload) {
+  // Real responses are always fresh copies; cloning stops tests sharing object references.
+  if (payload !== undefined && typeof payload !== "string") {
+    payload = JSON.parse(JSON.stringify(payload));
+  }
   return {
     ok: status < 400,
     status,

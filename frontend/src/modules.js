@@ -12,8 +12,8 @@ export const MODULES = [
     path: "chatbot",
     name: "WhatsApp Bot",
     stage: 2,
-    live: false,
-    summary: "Guests ask about offers, bills and table availability. Replies in their language.",
+    live: true,
+    summary: "Offers, guest conversations and a test chat. The bot answers about offers, bills and free tables.",
   },
   {
     path: "bookings",

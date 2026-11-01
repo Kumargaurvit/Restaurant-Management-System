@@ -41,7 +41,7 @@ describe("Dashboard", () => {
     }
   });
 
-  it("marks finished modules as live and the rest by stage", async () => {
+  it("marks every finished module as live", async () => {
     mockApi(baseRoutes(OWNER));
     renderApp("/", { user: OWNER });
     await screen.findByText("Online");
@@ -50,7 +50,7 @@ describe("Dashboard", () => {
     expect(within(content).getByRole("link", { name: /Billing/ })).toHaveTextContent("Live");
     expect(within(content).getByRole("link", { name: /Bookings/ })).toHaveTextContent("Live");
     expect(within(content).getByRole("link", { name: /Retention/ })).toHaveTextContent("Live");
-    expect(within(content).getByRole("link", { name: /WhatsApp Bot/ })).toHaveTextContent("Stage 2");
+    expect(within(content).getByRole("link", { name: /WhatsApp Bot/ })).toHaveTextContent("Live");
   });
 });
 

@@ -282,3 +282,71 @@ Stage 2 (the chatbot) is **not built yet**. Bookings and retention were built fi
 - Takeaway and dine-in (new button, or tap a free table) open the same form: contact number and customer name are both required, and the number can be searched to find an existing customer and fill in their name. The server still accepts orders without a customer (delivery, older clients).
 - The VIP segment and its thresholds are removed. Migration `c3e5a7b9d1f2` drops the columns and pauses any rule that targeted VIP.
 
+### 2026-10-22: Stage 1 completion and Stage 2 (WhatsApp chatbot), branch `ms-phase-2`
+
+**Stage 1 items completed**
+- Restaurant profile (name, address, phone, GSTIN with format check, FSSAI, footer) printed on receipts. Migration `9120eff7227e`.
+- Edit and delete for menu categories, items and tables. Deleting is blocked when history exists (an ordered item must be marked unavailable, a used table deactivated, a category with items kept), so past orders never break.
+- Staff management in Settings (owner): add staff, change role, deactivate and reactivate, reset password. The last active owner cannot be removed and owners cannot demote or deactivate themselves.
+- Password hashing cost is now a setting (`BCRYPT_ROUNDS`), which also made the test suite about four times faster.
+
+**Still not built from Stage 1** (decided to defer)
+- Inventory and stock tracking.
+- Payment gateway integration (UPI and card are recorded manually).
+- Direct thermal printer (ESC/POS) support; receipts print through the browser.
+
+**Stage 2 built**
+- Offers: owner-configured with optional start and end times, status (active, upcoming, expired, paused), and a one-tap "Apply" at billing. No discount values are hard-coded; time-based discounts are modelled as several offers.
+- Chat engine: `gpt-4.1-mini` with tool calling, history of the last 12 messages, up to 4 tool rounds, and a polite fallback (plus hand-off flag) when the model is off, fails or returns nothing.
+- Tools: `get_active_offers`, `check_table_availability` (right now), `get_my_recent_bills`, `get_bill_receipt`, `request_human_handoff`. All scoped to the guest's phone from the webhook, verified by tests that deliberately break the scoping.
+- Conversations stored per guest, with a "needs a person" queue and Mark as handled.
+- Inbound webhook protected by `WEBHOOK_SECRET` (disabled when empty); a console provider stands in for WhatsApp. A **Test chat** screen lets the owner try the bot with no WhatsApp at all.
+- Migration `6ee78296e767`.
+
+**Decisions** (change if wrong)
+- Table availability means free **right now**. Date and time reservations are Stage 3.
+- The bot never takes food orders or reservations; it hands them to a person.
+- Guests are identified by their WhatsApp number, the same 10-digit number used for customers.
+- Replying to a guest from the app is not built; the owner replies on WhatsApp.
+- Guest messages are cut at 1,000 characters.
+
+**Not done in Stage 2**
+- A real WhatsApp provider (still undecided) and its payload adapter.
+- Rate limiting and per-guest message caps, and OpenAI cost tracking.
+- Opening hours are not modelled, so the bot cannot answer "are you open?".
+- The bot has never been run against the real OpenAI API, because no key is configured. Everything around the model is tested with a scripted model; the real client is tested against a fake SDK response.
+
+**Next:** Stage 3 (dine-out booking), which also upgrades the bot's availability tool and adds a booking tool.
+
+### 2026-11-01: Merging `main` (bookings, retention, messaging) with our chatbot, branch `ms-phase-2-chatbot-check`
+
+**Comparison.** `main` already held the other developer's work (PR #1, `gk-phase-2-3-build`): bookings, retention, a messaging layer, the restaurant name, and the opt-out. His own notes say "Stage 2 (the chatbot) is **not built yet**". What he called phase 2 is the messaging layer (a `MessageProvider` interface, a `messages` log, and an inbound webhook that only handles STOP and START). That is infrastructure the chatbot needs, not a chatbot: no model, offers, availability, bills or hand-off. So there was no competing chatbot to keep or remove; our chatbot is the chatbot, and his messaging layer stays because bookings and retention depend on it.
+
+**What was kept from `main` unchanged in behaviour:** bookings (settings, slot availability, status flow, reminders), retention (RFM, rules, approval queue, report), the marketing opt-out, the scheduler, restaurant name at registration, the new-order form, all of his tests.
+
+**What was kept from our branch:** chatbot (model tools, offers, conversations, hand-off, test chat), customer insights, staff management, menu and table editing, receipt details, the configurable password-hashing cost.
+
+**What was reconciled**
+- **One messaging layer.** Our `messaging/base.py`, `console.py` and `factory.py` were removed in favour of his `messaging/provider.py` (`send(phone, body) -> bool`, `build_provider`, `send_message`).
+- **One inbound webhook:** `POST /api/messaging/inbound`. STOP and START are handled exactly as before; every other message is logged, answered by the bot, and the reply is sent through the provider and logged. Our separate `/api/chat/webhook` was removed. Setting names follow his: `WHATSAPP_PROVIDER`, `WHATSAPP_WEBHOOK_SECRET`, `OWNER_CONTACT`, `SCHEDULER_ENABLED`.
+- **Restaurant profile.** Both of us had built it. His name API is unchanged (`GET`/`PUT /api/restaurant`, owner renames, his tests rely on it). Our address, phone, GSTIN, FSSAI and footer live at `/api/restaurant/profile` (owner and manager can edit). The receipt prints the name alone as a compact header, and adds the details under it when they are saved.
+- **Migrations.** Ours branched from the same parent as his and also created `restaurant_profile`, which would have produced two heads. Our two migrations were deleted and replaced by one on top of his chain: `cf61375cfc10` (receipt detail columns and the chatbot tables). Tested up, down and up again; no drift between models and database.
+- **Tests.** His tests were left alone except one expectation: his dashboard test said the WhatsApp Bot was "Stage 2"; it is now live.
+
+**Chatbot upgrades made possible by his booking engine** (his notes said the chatbot should call it)
+- `check_table_availability` with a date lists the free booking slots for a party, using his availability rules. Without a date it answers walk-in availability and also respects opening hours and tables held by bookings.
+- `create_booking_request` creates a booking with source `whatsapp`, status *requested*. Staff confirm it in Bookings and the guest is messaged by his existing flow. A guest may hold at most 3 upcoming bookings through the bot.
+- `get_my_bookings` lists the guest's own upcoming bookings.
+- The hand-off shows `OWNER_CONTACT` when it is configured, and the system prompt now carries the restaurant name and today's date so "tomorrow" and "Saturday" resolve correctly.
+
+**Decisions** (change if wrong)
+- The bot cannot change or cancel a booking; it hands those to a person.
+- Bot replies are service messages, so the marketing opt-out does not stop them. Campaign messages still obey the opt-out as before.
+- Guests who book through the bot become customers, because his booking code creates the customer record.
+
+**Heads-up about local databases.**
+- A database made from `main` (the other developer's): just run `alembic upgrade head`. It applies `cf61375cfc10` and keeps all data.
+- The local database made from our branch **before** this merge has revisions that no longer exist (`9120eff7227e`, `6ee78296e767`) and lacks his bookings, retention and messaging tables, so it cannot be upgraded or stamped into the new chain. Recreate it with `docker compose down -v` then `docker compose up -d` (this deletes the local data).
+
+**Still open:** a real WhatsApp provider; the bot has never run against the real OpenAI API (no key configured); rate limiting and cost tracking; direct replies from the app.
+

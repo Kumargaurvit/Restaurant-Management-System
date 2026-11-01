@@ -1,7 +1,9 @@
+import textwrap
 from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
 
 from restaurant_management_system.billing.models import Bill, KitchenTicket, Order
+from restaurant_management_system.restaurant.models import RestaurantProfile
 
 WIDTH = 42  # characters per line on a 3-inch thermal printer
 
@@ -30,11 +32,36 @@ def _local(moment: datetime, zone: tzinfo) -> datetime:
     return moment.astimezone(zone)
 
 
+def _wrap(text: str) -> list[str]:
+    return textwrap.wrap(text, WIDTH) or []
+
+
+def _header(profile: RestaurantProfile | None) -> list[str]:
+    """Restaurant name, then address and registration numbers when saved."""
+    if profile is None:
+        return []
+    lines = []
+    if profile.name:
+        lines.append(_center(profile.name.upper()))
+    details = [*_wrap(profile.address)]
+    if profile.phone:
+        details.append(f"Ph: {profile.phone}")
+    if profile.gstin:
+        details.append(f"GSTIN: {profile.gstin}")
+    if profile.fssai:
+        details.append(f"FSSAI: {profile.fssai}")
+    lines.extend(_center(part) for part in details)
+    # A divider only when there is more than the name, so a name-only receipt stays compact.
+    if details:
+        lines.append(_rule("-"))
+    return lines
+
+
 def render_receipt(
-    bill: Bill, order: Order, zone: tzinfo, restaurant_name: str | None = None
+    bill: Bill, order: Order, zone: tzinfo, profile: RestaurantProfile | None = None
 ) -> str:
-    lines = [_center(restaurant_name.upper())] if restaurant_name else []
-    lines += [
+    lines = [
+        *_header(profile),
         _center("TAX INVOICE"),
         _rule("="),
         _pair("Invoice:", bill.invoice_number),
@@ -68,7 +95,8 @@ def render_receipt(
         lines.append(_pair(payment.mode.upper(), _amount(payment.amount)))
     lines.append(_pair("Status", bill.status.upper()))
     lines.append("")
-    lines.append(_center("Thank you! Visit again."))
+    footer = profile.receipt_footer if profile and profile.receipt_footer else "Thank you! Visit again."
+    lines.extend(_center(part) for part in _wrap(footer))
     return "\n".join(lines) + "\n"
 
 

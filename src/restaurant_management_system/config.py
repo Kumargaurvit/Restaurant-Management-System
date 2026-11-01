@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 12
+    bcrypt_rounds: int = 12
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
@@ -31,6 +32,16 @@ class Settings(BaseSettings):
 
     # Background jobs (booking reminders, automatic retention campaigns).
     scheduler_enabled: bool = True
+
+    # WhatsApp chatbot: how much history the model sees and how many tool rounds it may use.
+    chat_history_messages: int = 12
+    chat_max_tool_rounds: int = 4
+    # Most messages one guest may send the bot per hour (it costs money per message). 0 = no limit.
+    chat_max_messages_per_hour: int = 30
+
+    # Logging: "text" for people, "json" for log tools.
+    log_level: str = "INFO"
+    log_format: str = "text"
 
     cors_origins: list[str] = ["http://localhost:5173"]
 

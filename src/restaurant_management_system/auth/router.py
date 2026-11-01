@@ -41,9 +41,20 @@ class UserOut(BaseModel):
     name: str
     email: str
     role: str
+    is_active: bool = True
     restaurant_name: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class StaffUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    role: Role | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 
 class TokenOut(BaseModel):
@@ -142,3 +153,72 @@ async def create_staff(
     session.add(user)
     await session.commit()
     return user
+
+
+@router.get(
+    "/users",
+    response_model=list[UserOut],
+    dependencies=[Depends(require_roles(Role.OWNER))],
+)
+async def list_staff(session: AsyncSession = Depends(get_session)) -> list[User]:
+    return list(await session.scalars(select(User).order_by(User.id)))
+
+
+async def _active_owner_count(session: AsyncSession) -> int:
+    return (
+        await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == Role.OWNER.value, User.is_active.is_(True))
+        )
+        or 0
+    )
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+async def update_staff(
+    user_id: int,
+    body: StaffUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor: User = Depends(require_roles(Role.OWNER)),
+) -> User:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
+
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    loses_owner = user.role == Role.OWNER.value and user.is_active and (
+        changes.get("is_active") is False
+        or ("role" in changes and changes["role"] != Role.OWNER)
+    )
+    if loses_owner:
+        if user.id == actor.id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "You cannot remove your own owner access"
+            )
+        if await _active_owner_count(session) <= 1:
+            raise HTTPException(status.HTTP_409_CONFLICT, "At least one owner is required")
+    if user.id == actor.id and changes.get("is_active") is False:
+        raise HTTPException(status.HTTP_409_CONFLICT, "You cannot deactivate yourself")
+
+    if "role" in changes:
+        changes["role"] = changes["role"].value
+    for field, value in changes.items():
+        setattr(user, field, value)
+    await session.commit()
+    return user
+
+
+@router.post(
+    "/users/{user_id}/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(Role.OWNER))],
+)
+async def reset_staff_password(
+    user_id: int, body: PasswordReset, session: AsyncSession = Depends(get_session)
+) -> None:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
+    user.password_hash = await hash_password(body.password)
+    await session.commit()

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { API_URL, getHealth } from "../api.js";
-import { useAuth } from "../auth.jsx";
+import { canManage, useAuth } from "../auth.jsx";
+import ProfileSection from "../components/ProfileSection.jsx";
+import StaffSection from "../components/StaffSection.jsx";
 
 function RestaurantName() {
   const { user, renameRestaurant } = useAuth();
@@ -58,10 +60,14 @@ export default function Settings() {
   }, []);
 
   return (
-    <section>
+    <section className="stack">
       <h1>Settings</h1>
+
       {user.role === "owner" && <RestaurantName />}
+      {canManage(user) && <ProfileSection />}
+      {user.role === "owner" && <StaffSection />}
       <div className="card">
+        <h2>System</h2>
         <p>
           <strong>API URL:</strong> {API_URL}
         </p>

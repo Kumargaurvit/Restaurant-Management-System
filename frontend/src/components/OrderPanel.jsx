@@ -17,6 +17,7 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [offers, setOffers] = useState([]);
 
   const isOpen = order.status === "open";
 
@@ -33,6 +34,15 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
       });
     return () => controller.abort();
   }, [order.id, order.status]);
+
+  // Offers running right now, so the cashier can apply one with a tap.
+  useEffect(() => {
+    const controller = new AbortController();
+    request("/api/offers/active", { signal: controller.signal })
+      .then(setOffers)
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (bill) setAmount(bill.status === "paid" ? "" : String(Number(bill.amount_due).toFixed(2)));
@@ -262,6 +272,23 @@ export default function OrderPanel({ order, menuItems, categories, onOrderChange
               >
                 Generate bill
               </button>
+            </div>
+          )}
+          {canBill(user) && offers.some((offer) => offer.discount_percent !== null) && (
+            <div className="chips" aria-label="Running offers">
+              {offers
+                .filter((offer) => offer.discount_percent !== null)
+                .map((offer) => (
+                  <button
+                    key={offer.id}
+                    className="chip"
+                    onClick={() =>
+                      setDiscount(((estimate * Number(offer.discount_percent)) / 100).toFixed(2))
+                    }
+                  >
+                    {`Apply ${offer.title} (${Number(offer.discount_percent)}%)`}
+                  </button>
+                ))}
             </div>
           )}
         </>

@@ -500,7 +500,9 @@ select:focus-visible {
 }
 
 .line-name {
-  flex: 1;
+  /* A real basis (not 0) so the name wraps onto its own line instead of being squeezed
+     into the buttons when a row is crowded. */
+  flex: 1 1 11rem;
   min-width: 0;
 }
 
@@ -667,6 +669,88 @@ select:focus-visible {
 .history-item {
   align-items: flex-start;
 }
+
+/* ---------- settings, staff, editing ---------- */
+
+.button.danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+.staff-row {
+  flex-wrap: wrap;
+}
+
+.item-edit {
+  width: 100%;
+}
+
+.lines li .button {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+.lines li {
+  flex-wrap: wrap;
+}
+
+/* ---------- chatbot ---------- */
+
+.thread {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  max-width: 85%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble.assistant {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.bubble.user {
+  align-self: flex-start;
+}
+
+.bubble-who,
+.bubble-time {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.attention {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: var(--bad-soft);
+  color: var(--text);
+}
+
+.grow {
+  flex: 1;
+  min-width: 12rem;
 
 /* ---------- bookings and retention ---------- */
 

@@ -25,3 +25,25 @@ async def set_restaurant_name(session: AsyncSession, name: str) -> RestaurantPro
         profile.name = name.strip()
     await session.flush()
     return profile
+
+
+async def get_profile_or_blank(session: AsyncSession) -> RestaurantProfile:
+    """The saved profile, or an empty one (not saved) so callers can always read its fields."""
+    profile = await get_profile(session)
+    if profile is None:
+        return RestaurantProfile(
+            name="", address="", phone="", gstin="", fssai="", receipt_footer="", logo=""
+        )
+    return profile
+
+
+async def update_details(session: AsyncSession, details: dict[str, str]) -> RestaurantProfile:
+    """Save the receipt details. Creates the profile (with no name yet) if none exists."""
+    profile = await get_profile(session)
+    if profile is None:
+        profile = RestaurantProfile(name="")
+        session.add(profile)
+    for field, value in details.items():
+        setattr(profile, field, value)
+    await session.flush()
+    return profile

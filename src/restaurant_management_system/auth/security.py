@@ -4,11 +4,11 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 import jwt
 
-from restaurant_management_system.config import Settings
+from restaurant_management_system.config import Settings, get_settings
 
 
-def _hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+def _hash_password(password: str, rounds: int) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=rounds)).decode()
 
 
 def _verify_password(password: str, password_hash: str) -> bool:
@@ -17,7 +17,7 @@ def _verify_password(password: str, password_hash: str) -> bool:
 
 # bcrypt is CPU-bound, so run it in a thread to keep the event loop free.
 async def hash_password(password: str) -> str:
-    return await asyncio.to_thread(_hash_password, password)
+    return await asyncio.to_thread(_hash_password, password, get_settings().bcrypt_rounds)
 
 
 async def verify_password(password: str, password_hash: str) -> bool:

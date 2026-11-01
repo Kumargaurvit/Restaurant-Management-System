@@ -21,18 +21,43 @@ class CategoryOut(ORMModel):
     sort_order: int
 
 
+class VariantIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60, pattern=r"\S")
+    price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+
+
+class VariantUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60, pattern=r"\S")
+    price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+
+
+class VariantOut(ORMModel):
+    id: int
+    name: str
+    price: Decimal
+
+
 class MenuItemCreate(BaseModel):
     category_id: int
     name: str = Field(min_length=1, max_length=160)
     price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     gst_rate: Decimal = Field(default=Decimal("5.00"), ge=0, le=28)
+    stock_quantity: int | None = Field(default=None, ge=0)
+
+
+class CategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    sort_order: int | None = None
 
 
 class MenuItemUpdate(BaseModel):
+    category_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=160)
     price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     gst_rate: Decimal | None = Field(default=None, ge=0, le=28)
     is_available: bool | None = None
+    # Send null to stop tracking stock for this item.
+    stock_quantity: int | None = Field(default=None, ge=0)
 
 
 class MenuItemOut(ORMModel):
@@ -42,11 +67,19 @@ class MenuItemOut(ORMModel):
     price: Decimal
     gst_rate: Decimal
     is_available: bool
+    stock_quantity: int | None
+    variants: list[VariantOut]
 
 
 class TableCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     capacity: int = Field(default=2, ge=1, le=50)
+
+
+class TableUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    capacity: int | None = Field(default=None, ge=1, le=50)
+    is_active: bool | None = None
 
 
 class TableOut(ORMModel):
@@ -71,6 +104,7 @@ class OrderCustomerSet(BaseModel):
 
 class OrderItemAdd(BaseModel):
     menu_item_id: int
+    variant_id: int | None = None
     quantity: int = Field(default=1, ge=1, le=100)
     notes: str | None = Field(default=None, max_length=300)
 
@@ -82,6 +116,7 @@ class OrderItemUpdate(BaseModel):
 class OrderItemOut(ORMModel):
     id: int
     menu_item_id: int
+    variant_id: int | None
     name: str
     unit_price: Decimal
     gst_rate: Decimal
@@ -143,6 +178,16 @@ class BillOut(ORMModel):
     payments: list[PaymentOut]
     amount_paid: Decimal
     amount_due: Decimal
+
+
+class SendBillIn(BaseModel):
+    # Defaults to the guest's number on the order.
+    phone: str | None = Field(default=None, max_length=20)
+
+
+class SendBillOut(BaseModel):
+    phone: str
+    status: str
 
 
 class DailySalesOut(BaseModel):
